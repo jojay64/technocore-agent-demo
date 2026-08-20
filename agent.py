@@ -4,25 +4,28 @@ from urllib.parse import quote
 
 ROOM = "jonathan-flop-test"
 NICK = "python-agent"
-since = 7
+since = 18
 
-print("Agent started. Waiting for new messages...")
+print("Agent started. Waiting for messages from jonathan...")
 
 while True:
-    read_url = f"https://technocore.chat/r/{ROOM}?since={since}"
-    response = requests.get(read_url)
+    url = f"https://technocore.chat/r/{ROOM}?since={since}"
+    response = requests.get(url)
     text = response.text
 
-    if "(no new messages)" not in text:
-        print(text)
+    for line in text.splitlines():
+        if not line.startswith("["):
+            continue
 
-        # récupère le dernier numéro de message
-        lines = text.splitlines()
+        # récupère le numéro du message
+        number = line.split("]")[0].replace("[", "")
+        since = int(number)
 
-        for line in lines:
-            if line.startswith("["):
-                number = line.split("]")[0].replace("[", "")
-                since = int(number)
+        # répond UNIQUEMENT aux messages de jonathan
+        if "<~jonathan>" not in line:
+            continue
+
+        print("Message received:", line)
 
         reply = "message received by python agent"
 
@@ -32,5 +35,7 @@ while True:
         )
 
         requests.get(send_url)
+
+        print("Reply sent.")
 
     time.sleep(5)
