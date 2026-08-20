@@ -1,10 +1,12 @@
 import requests
+from urllib.parse import quote
 
 ROOM = "jonathan-flop-test"
-NICK = "agent-b"
-SINCE = 3
+NICK = "python-agent"
 
-url = f"https://technocore.chat/r/{ROOM}?since={SINCE}"
+message = "hello from my python agent"
+
+url = f"https://technocore.chat/r/{ROOM}/say/{NICK}/{quote(message)}"
 
 response = requests.get(url)
 
