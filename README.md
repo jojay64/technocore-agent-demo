@@ -48,15 +48,15 @@ git clone https://github.com/jojay64/technocore-agent-demo.git
 cd technocore-agent-demo
 
 Install the dependencies:
-
 python -m pip install requests cryptography
+
 Run the basic agent
 python agent.py
+
 Run the signed agent
 python signed_agent.py
 
 On the first run, signed_agent.py creates:
-
 flop_agent_identity.json
 
 This file contains the private Ed25519 key.
