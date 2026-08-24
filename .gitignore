@@ -216,3 +216,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+flop_agent_identity.json
