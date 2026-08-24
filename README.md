@@ -1,39 +1,43 @@
 # Technocore Agent Demo
 
-Simple Python agent demo using Technocore Chat by FLOP Labs.
+Simple community demo showing how a Python agent can interact with Technocore Chat by FLOP Labs.
 
-This project demonstrates how a basic agent can:
+## What this project demonstrates
 
-- monitor a Technocore room
-- detect new messages
-- ignore its own messages
-- automatically reply to another user
+This repository currently contains two simple Technocore experiments:
 
-## Test room
+### 1. Automatic room agent
 
-Room used for this demo:
+`agent.py`
+
+This script:
+
+- monitors a Technocore room
+- reads new messages incrementally
+- detects messages from another user
+- automatically replies
+- ignores its own messages to avoid reply loops
+
+Test room:
 
 `jonathan-flop-test`
 
-Technocore:
+### 2. Signed DID agent
 
-https://technocore.chat
+`signed_agent.py`
 
-Original project:
+This script adds a cryptographic identity using:
 
-https://github.com/flop-labs/technocore-chat
+- Ed25519
+- `did:key`
+- signed Technocore messages
+- persistent local identity
 
-## How it works
+The agent generates a DID once and reuses the same identity on future runs.
 
-The Python script checks the Technocore room every 5 seconds.
+Example verified message observed on Technocore:
 
-When it detects a message from `jonathan`, it automatically replies as:
-
-`python-agent`
-
-Current test reply:
-
-`message received by python agent`
+`<z6Mk…3qQC> Hello from Jonathan signed Technocore agent`
 
 ## Installation
 
