@@ -1,230 +1,233 @@
-# Technocore Agent Demo
+# Technocore Multi-Agent DID Demo
 
-Simple community demo showing how a Python agent can interact with Technocore Chat by FLOP Labs.
+A small experimental project showing how autonomous AI agents can coordinate through [Technocore](https://technocore.chat) using shared rooms, incremental reads, long-polling, persistent state, and signed `did:key` identities.
 
-## What this project demonstrates
+The current demo uses three autonomous agents:
 
-This repository currently contains two simple Technocore experiments:
+- **Research Agent** — produces and improves a technical proposal.
+- **Critic Agent** — challenges unsupported assumptions and weak reasoning.
+- **Judge Agent** — reviews the final proposal and returns an independent verdict.
 
-### 1. Automatic room agent
+Each agent has its own persistent Ed25519 `did:key` identity and sends signed messages through Technocore.
 
-`agent.py`
-
-This script:
-
-- monitors a Technocore room
-- reads new messages incrementally
-- detects messages from another user
-- automatically replies
-- ignores its own messages to avoid reply loops
-
-Test room:
-
-`jonathan-flop-test`
-
-### 2. Signed DID agent
-
-`signed_agent.py`
-
-This script adds a cryptographic identity using:
-
-- Ed25519
-- `did:key`
-- signed Technocore messages
-- persistent local identity
-
-The agent generates a DID once and reuses the same identity on future runs.
-
-Example verified message observed on Technocore:
-
-`<z6Mk…3qQC> Hello from Jonathan signed Technocore agent`
-
-## Installation
-
-Clone the repository:
-
-```bash
-git clone https://github.com/jojay64/technocore-agent-demo.git
-cd technocore-agent-demo
-```
-
-Install the dependencies:
-
-```bash
-python -m pip install requests cryptography
-```
-
-## Run the basic agent
-
-```bash
-python agent.py
-```
-
-## Run the signed agent
-
-```bash
-python signed_agent.py
-```
-
-On the first run, `signed_agent.py` creates:
-
-`flop_agent_identity.json`
-
-This file contains the private Ed25519 key.
-
-## Important security note
-
-Never publish or share `flop_agent_identity.json`.
-
-It is excluded from Git through `.gitignore`.
-
-The DID is public, but the private key must remain private.
-
-## Technocore
-
-Technocore Chat:
-
-https://technocore.chat
-
-Human interface:
-
-https://technocore.chat/humans
-
-Original FLOP Labs repository:
-
-https://github.com/flop-labs/technocore-chat
-
-## Current status
-
-Working:
-
-* Technocore room creation
-* message posting
-* incremental reads using `since`
-* automatic replies
-* self-message filtering
-* Ed25519 identity generation
-* persistent DID identity
-* signed messages
-* verified Technocore author identity
-
-## Next steps
-
-Possible next experiments:
-
-* connect an AI model to generate replies
-* persistent agent state using Technocore notes
-* signed autonomous agent check-ins
-* multi-agent communication
-* long polling instead of fixed polling intervals
-
-## GPT Agent
-
-`gpt_agent.py`
-
-This experiment connects Technocore to the OpenAI API.
-
-Flow:
-
-`Technocore → Python agent → GPT → Technocore`
-
-The agent:
-
-* monitors a Technocore room
-* detects new messages
-* sends the message to GPT
-* generates a contextual response
-* posts the response back to Technocore
-
-Example room:
-
-`jonathan-flop-test`
-
-Run:
-
-```bash
-python gpt_agent.py
-```
-
-The OpenAI API key is stored locally as an environment variable and is never included in the repository.
-
-## Multi-Agent Experiment
-
-`research_agent.py`
-`critic_agent.py`
-
-This experiment demonstrates two autonomous GPT-powered agents communicating through Technocore.
-
-Flow:
-
-`research-agent → Technocore → critic-agent → Technocore → research-agent`
-
-### Research Agent
-
-The research agent receives feedback from the critic agent and improves its analysis.
-
-### Critic Agent
-
-The critic agent reads the research agent's response and identifies weaknesses, missing information, and possible improvements.
-
-Both agents:
-
-* monitor the same Technocore room
-* use incremental message reading
-* communicate through Technocore
-* use GPT to generate their responses
-* automatically react to messages from the other agent
-* stop after a fixed number of replies to avoid infinite loops
-
-Test room:
-
-`flop-agent-lab`
-
-Example autonomous exchange:
-
-```text
-research-agent:
-Analyze how Technocore can help autonomous AI agents coordinate
-
-critic-agent:
-The analysis should be more specific about the coordination mechanisms...
-
-research-agent:
-Add a clear mapping of Technocore primitives, interaction assumptions and failure semantics...
-
-critic-agent:
-Clarify the authoritative primitives and guarantee boundaries...
-```
-
-Once the first message is sent, the agents can continue the discussion without human intervention.
+---
 
 ## Architecture
 
 ```text
-                 Technocore
-                     │
-          ┌──────────┴──────────┐
-          │                     │
-   research-agent         critic-agent
-          │                     │
-          └────── OpenAI ───────┘
-                 GPT models
-```
+             Technocore Room
+            flop-agent-lab
 
-## Next Steps
+     ┌─────────────────────────┐
+     │                         │
+     ▼                         │
+Research Agent ───────► Critic Agent
+     │                         │
+     ◄─────────────────────────┘
+     │
+     │ FINAL proposal
+     ▼
+ Judge Agent
+     │
+     ▼
+ Signed verdict
 
-Planned experiments:
+The agents do not communicate directly with each other locally.
 
-* give each autonomous agent its own persistent `did:key`
-* cryptographically sign multi-agent messages
-* persistent agent state using Technocore notes
-* agent mailboxes
-* private / encrypted agent communication
-* more than two cooperating agents
+Every message is published to the Technocore room and then read back by the other agents.
 
-## Disclaimer
+Signed Agent Identities
 
-This is an independent community experiment built around Technocore Chat.
+The demo currently uses three separate persistent identities.
 
-It is not an official FLOP Labs project.
+Research Agent
+did:key:z6MkkPtvJEneCieb8AVphWVuEcxihMs2BK9HCETMtRQjFuAv
+
+Critic Agent
+did:key:z6MkiLc24vTBQwtXCWw5gAfwHL7Nvy3xszK7rUpgPnaWictM
+
+Judge Agent
+did:key:z6Mkpb4AReHGkq88YXG5JDW6rC4dvzb3mPToXieZUf3XjoRG
+
+Each agent only accepts messages from the DID it expects.
+
+This avoids relying on unsigned nicknames for agent identity.
+
+Workflow
+
+The demo follows this sequence:
+Research
+   │
+   ▼
+Initial proposal
+   │
+   ▼
+Critic
+   │
+   ▼
+Critique
+   │
+   ▼
+Research
+   │
+   ▼
+Improved proposal
+   │
+   ▼
+Critic
+   │
+   ▼
+Further critique
+   │
+   ▼
+Research
+   │
+   ▼
+FINAL proposal
+   │
+   ▼
+Judge
+   │
+   ▼
+JUDGE verdict
+
+The conversation is intentionally bounded to avoid uncontrolled autonomous loops.
+
+Technocore Primitives Used
+
+The experiment intentionally stays close to the primitives used by Technocore:
+
+Shared rooms
+Incremental message reads
+Long-polling
+Persistent notes / KV state
+Signed Ed25519 did:key identities
+
+The agents are explicitly instructed not to assume capabilities such as:
+
+consensus
+distributed locks
+leader election
+schedulers
+transactions
+exactly-once delivery
+confidentiality
+
+unless those capabilities are explicitly established.
+
+This is important because application-level coordination patterns should not be confused with guarantees provided by the communication layer itself.
+
+Signed Messages
+
+Messages are signed using Ed25519.
+
+The signed payload follows this structure:
+
+room|nonce|text
+
+The signature is encoded using base64url and sent through Technocore's signed-message endpoint.
+
+Each agent keeps its private key locally and reuses the same identity between runs.
+
+Files
+
+agent.py
+
+Basic Technocore agent example.
+
+gpt_agent.py
+
+GPT-powered Technocore agent.
+
+research_agent.py
+critic_agent.py
+
+Earlier unsigned two-agent experiment.
+
+signed_agent.py
+
+Single-agent signed DID experiment.
+
+research_agent_signed.py
+
+Signed Research Agent.
+
+critic_agent_signed.py
+
+Signed Critic Agent.
+
+judge_agent_signed.py
+
+Signed Judge Agent and final reviewer.
+
+Running the Three-Agent Demo
+
+Open three terminals.
+
+1. Start the Judge Agent
+python judge_agent_signed.py
+
+The Judge waits for a signed FINAL: message from the Research Agent.
+
+2. Start the Critic Agent
+python critic_agent_signed.py
+The Critic waits for signed messages from the Research Agent.
+
+3. Start the Research Agent
+python research_agent_signed.py
+
+The Research Agent automatically generates the first proposal and starts the autonomous discussion.
+
+The complete flow then happens through Technocore.
+
+Example Final Result
+
+A successful run ends with a signed Judge verdict similar to:
+
+JUDGE:
+SUPPORTED: proposal stays within the documented primitives.
+LIMITATION: stronger coordination guarantees are not assumed.
+VERDICT: PASS.
+
+Security
+
+Private keys are stored locally in files such as:
+
+research_identity.json
+critic_identity.json
+judge_identity.json
+flop_agent_identity.json
+
+These files contain private key material and must never be committed to GitHub.
+
+They are excluded through .gitignore.
+
+Only the public did:key identifiers should be shared publicly.
+
+AI Model
+
+The agents currently use the OpenAI API for reasoning.
+
+The API key is loaded from the local environment and is not stored in the repository.
+
+Example:
+
+OPENAI_API_KEY
+
+The communication layer itself remains Technocore.
+
+Goal
+
+The goal of this project is to explore a simple pattern for authenticated autonomous agent coordination:
+AI reasoning
+      +
+persistent DID identity
+      +
+signed messages
+      +
+shared Technocore communication
+      =
+verifiable multi-agent interaction
+
+This repository is experimental and intended as a practical proof of concept for building autonomous agents on top of Technocore.
 
