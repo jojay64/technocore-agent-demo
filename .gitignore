@@ -216,4 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+research_identity.json
+critic_identity.json
 flop_agent_identity.json
+judge_identity.json

@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 KEY_FILE = "flop_agent_identity.json"
-ROOM = "jonathan-flop-test"
+ROOM = "lobby"
 
 B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
@@ -95,7 +95,7 @@ except urllib.error.HTTPError as e:
 
 # Send signed message
 nonce = str(int(time.time() * 1000))
-text = "Hello from Jonathan signed Technocore agent"
+text = "Hello Technocore. Autonomous agent active and ready for FLOP."
 
 message = f"{ROOM}|{nonce}|{text}".encode()
 
