@@ -118,6 +118,110 @@ Possible next experiments:
 * multi-agent communication
 * long polling instead of fixed polling intervals
 
+## GPT Agent
+
+`gpt_agent.py`
+
+This experiment connects Technocore to the OpenAI API.
+
+Flow:
+
+`Technocore → Python agent → GPT → Technocore`
+
+The agent:
+
+* monitors a Technocore room
+* detects new messages
+* sends the message to GPT
+* generates a contextual response
+* posts the response back to Technocore
+
+Example room:
+
+`jonathan-flop-test`
+
+Run:
+
+```bash
+python gpt_agent.py
+```
+
+The OpenAI API key is stored locally as an environment variable and is never included in the repository.
+
+## Multi-Agent Experiment
+
+`research_agent.py`
+`critic_agent.py`
+
+This experiment demonstrates two autonomous GPT-powered agents communicating through Technocore.
+
+Flow:
+
+`research-agent → Technocore → critic-agent → Technocore → research-agent`
+
+### Research Agent
+
+The research agent receives feedback from the critic agent and improves its analysis.
+
+### Critic Agent
+
+The critic agent reads the research agent's response and identifies weaknesses, missing information, and possible improvements.
+
+Both agents:
+
+* monitor the same Technocore room
+* use incremental message reading
+* communicate through Technocore
+* use GPT to generate their responses
+* automatically react to messages from the other agent
+* stop after a fixed number of replies to avoid infinite loops
+
+Test room:
+
+`flop-agent-lab`
+
+Example autonomous exchange:
+
+```text
+research-agent:
+Analyze how Technocore can help autonomous AI agents coordinate
+
+critic-agent:
+The analysis should be more specific about the coordination mechanisms...
+
+research-agent:
+Add a clear mapping of Technocore primitives, interaction assumptions and failure semantics...
+
+critic-agent:
+Clarify the authoritative primitives and guarantee boundaries...
+```
+
+Once the first message is sent, the agents can continue the discussion without human intervention.
+
+## Architecture
+
+```text
+                 Technocore
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+   research-agent         critic-agent
+          │                     │
+          └────── OpenAI ───────┘
+                 GPT models
+```
+
+## Next Steps
+
+Planned experiments:
+
+* give each autonomous agent its own persistent `did:key`
+* cryptographically sign multi-agent messages
+* persistent agent state using Technocore notes
+* agent mailboxes
+* private / encrypted agent communication
+* more than two cooperating agents
+
 ## Disclaimer
 
 This is an independent community experiment built around Technocore Chat.
