@@ -31,8 +31,11 @@ HTTP_TIMEOUT_SECONDS = 25
 
 COOLDOWN_SECONDS = 10 * 60
 QUOTA_WINDOW_SECONDS = 24 * 60 * 60
-MAX_SUCCESSFUL_SENDS_24H = 6
-MAX_SOCIAL_SENDS_24H = 1
+MAX_TECHNICAL_SENDS_24H = 10
+MAX_SOCIAL_SENDS_24H = 10
+MAX_SUCCESSFUL_SENDS_24H = (
+    MAX_TECHNICAL_SENDS_24H + MAX_SOCIAL_SENDS_24H
+)
 
 MAX_INPUT_CHARS = 1800
 MAX_RESPONSE_CHARS = 600
@@ -710,6 +713,16 @@ def quota_status(state):
     return remaining, cooldown_wait, quota_wait
 
 
+def category_counts(state):
+    prune_state(state)
+    social_count = len(state.get("social_sends", []))
+    technical_count = max(
+        0,
+        len(state.get("successful_sends", [])) - social_count,
+    )
+    return technical_count, social_count
+
+
 def enqueue_message(message, state):
     try:
         seq = int(message.get("seq", 0))
@@ -725,8 +738,13 @@ def enqueue_message(message, state):
         return
 
     prune_state(state)
-    if priority == 30 and len(state.get("social_sends", [])) >= MAX_SOCIAL_SENDS_24H:
+    technical_count, social_count = category_counts(state)
+
+    if priority == 30 and social_count >= MAX_SOCIAL_SENDS_24H:
         print(f"FILTERED seq {seq}: 24 h social-conversation quota already used")
+        return
+    if priority != 30 and technical_count >= MAX_TECHNICAL_SENDS_24H:
+        print(f"FILTERED seq {seq}: 24 h technical-response quota already used")
         return
 
     duplicate, score = is_duplicate_or_similar(text, state)
@@ -758,7 +776,22 @@ def process_next(private_key, did, state):
     if not state["pending"]:
         return False, "queue empty"
 
-    item = state["pending"].pop(0)
+    technical_count, social_count = category_counts(state)
+    selected_index = None
+
+    for index, candidate in enumerate(state["pending"]):
+        is_social = int(candidate.get("priority", 0)) == 30
+        if is_social and social_count < MAX_SOCIAL_SENDS_24H:
+            selected_index = index
+            break
+        if not is_social and technical_count < MAX_TECHNICAL_SENDS_24H:
+            selected_index = index
+            break
+
+    if selected_index is None:
+        return False, "technical and social 24 h category quotas are full"
+
+    item = state["pending"].pop(selected_index)
     save_state(state)
 
     seq = item["seq"]
@@ -963,8 +996,9 @@ def main():
     print("Research DID:", did)
     print("Pipeline: Research -> Critic -> Judge -> signed AUTO-SEND")
     print("Cooldown:", COOLDOWN_SECONDS // 60, "minutes")
-    print("Persistent 24 h quota:", MAX_SUCCESSFUL_SENDS_24H)
+    print("Technical-response quota:", MAX_TECHNICAL_SENDS_24H, "per 24 h")
     print("Light-conversation quota:", MAX_SOCIAL_SENDS_24H, "per 24 h")
+    print("Maximum combined quota:", MAX_SUCCESSFUL_SENDS_24H, "per 24 h")
     print("Similarity threshold:", SIMILARITY_THRESHOLD)
     print("State file:", STATE_FILE)
     print("Starting sequence:", state["last_sequence"])
