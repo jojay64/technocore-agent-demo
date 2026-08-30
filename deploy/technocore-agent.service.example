@@ -1,0 +1,20 @@
+[Unit]
+Description=Technocore guarded autonomous agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/technocore-agent-demo
+EnvironmentFile=/home/ubuntu/technocore-agent-demo/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/ubuntu/technocore-agent-demo/.venv/bin/python /home/ubuntu/technocore-agent-demo/listen_agents.py
+Restart=always
+RestartSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
