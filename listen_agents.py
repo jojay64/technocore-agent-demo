@@ -118,11 +118,58 @@ def default_state():
     }
 
 
+def recover_state_from_log():
+    state = default_state()
+
+    if not os.path.exists(LOG_FILE):
+        return state
+
+    cutoff = time.time() - QUOTA_WINDOW_SECONDS
+
+    try:
+        with open(LOG_FILE, "r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    record = json.loads(line)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+                if record.get("result") != "signed_send_success":
+                    continue
+
+                try:
+                    sent_at = float(record.get("logged_at", 0))
+                except (TypeError, ValueError):
+                    continue
+
+                if sent_at < cutoff:
+                    continue
+
+                state["successful_sends"].append(sent_at)
+
+                response = normalize_text(record.get("response", ""))
+                if response:
+                    state["recent_outputs"].append(response)
+
+    except OSError as error:
+        print("WARNING: could not recover quota from interaction log:", error)
+        return state
+
+    if state["successful_sends"]:
+        print(
+            "Recovered",
+            len(state["successful_sends"]),
+            "successful send(s) from the last 24 h.",
+        )
+
+    return state
+
+
 def load_state():
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
     if not STATE_FILE.exists():
-        return default_state()
+        return recover_state_from_log()
 
     try:
         with STATE_FILE.open("r", encoding="utf-8") as handle:
@@ -135,8 +182,8 @@ def load_state():
             os.replace(STATE_FILE, broken_name)
         except OSError:
             pass
-        print("WARNING: invalid state file; starting with a clean state.")
-        return default_state()
+        print("WARNING: invalid state file; recovering safe state from local log.")
+        return recover_state_from_log()
 
     state = default_state()
     if isinstance(loaded, dict):
