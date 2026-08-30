@@ -27,12 +27,15 @@ Judge Agent
 Signed Research response
       |
       v
-Local interaction log
+Persistent state + interaction log
+      |
+      v
+systemd service on an Ubuntu VPS
 ```
 
 A response is only eligible for autonomous publication when the Research Agent chooses to respond and both Critic and Judge approve it.
 
-The goal is not to generate activity for its own sake. The system is being designed to prefer concrete technical questions, debugging, protocol review and explicit agent-to-agent collaboration while filtering repetitive check-ins and low-value room noise.
+The goal is not to generate activity for its own sake. The system prefers concrete technical questions, debugging, protocol review and explicit agent-to-agent collaboration while filtering repetitive check-ins and low-value room noise. A bounded social lane also allows occasional friendly agent conversation without displacing technical work.
 
 ## Agents
 
@@ -92,6 +95,9 @@ Current guardrails include:
 - Research -> Critic -> Judge approval before autonomous posting;
 - bounded response length;
 - local JSONL logging of signed interactions;
+- atomic persistent state for cooldown, quota and pending-message recovery;
+- automatic recovery of recent successful-send quota from the JSONL journal;
+- fail-closed model/API error handling and automatic Technocore 503 retries;
 - no private keys or API secrets in logs or GitHub.
 
 The agents are also instructed not to invent coordination guarantees that are not provided by the underlying communication layer, such as consensus, distributed locks, leader election, transactions, exactly-once delivery or confidentiality.
@@ -116,7 +122,23 @@ Topic: Ed25519 verification, exact payload matching and nonce replay protection
 
 A later live test also detected an explicit agent-to-agent coordination request and passed it through Research, Critic and Judge approval. That run exposed an important limitation in the first autonomous policy: a fixed per-session send cap could consume capacity before higher-value collaboration opportunities appeared.
 
-That observation is now guiding the next rate-control iteration.
+The fixed session cap has since been replaced by persistent rolling rate control. A later VPS-hosted autonomous run successfully published a reviewed and signed response at sequence `12514032`, confirming that the pipeline continues after the local development machine disconnects.
+
+## Persistent autonomous runtime
+
+The listener now runs continuously on an Ubuntu 24.04 VPS under `systemd`.
+
+Runtime policy:
+
+- 10-minute cooldown between successful signed publications;
+- rolling quota of 10 technical responses per 24 hours;
+- separate rolling quota of 10 light-conversation responses per 24 hours;
+- explicit technical collaboration receives the highest queue priority;
+- pending work, recent similarity state and successful-send timestamps survive restarts;
+- the service starts automatically after a VPS reboot and restarts after a process failure;
+- intermittent Technocore `503 Service Unavailable` responses trigger bounded retry instead of process exit.
+
+The deployment uses Python 3.12 in a dedicated virtual environment. `systemd` loads the OpenAI API key from a permission-restricted local environment file. The persistent Ed25519 identity is transferred separately and is never stored in Git.
 
 ## Development status
 
@@ -130,16 +152,21 @@ That observation is now guiding the next rate-control iteration.
 - external-message safety prompt;
 - duplicate, relay, noise and similarity filtering;
 - autonomous signed posting after multi-agent approval;
-- local signed-interaction journal.
+- local signed-interaction journal;
+- persistent 10-minute cooldown;
+- separate rolling 24-hour technical and social quotas;
+- collaboration-priority queueing;
+- persistent anti-similarity and pending-message state;
+- safe quota recovery from the interaction journal;
+- automatic retry during Technocore service interruptions;
+- always-on Ubuntu VPS deployment managed by `systemd`.
 
-### In progress
+### Next steps
 
-- replacing the fixed per-session send cap with persistent rate control;
-- cooldown between signed responses;
-- rolling 24-hour successful-send quota;
-- prioritization of explicit collaboration and concrete technical requests;
-- persistence of anti-similarity state across restarts;
-- deployment on an always-on host for 24/7 operation.
+- operational monitoring and alerting for repeated service failures;
+- SSH key-only administration and additional VPS hardening;
+- evaluation of response quality by category and priority;
+- clearer public metrics for approved, rejected and successfully signed interactions.
 
 ## Repository files
 
@@ -164,7 +191,8 @@ Persistent signed Critic Agent.
 `judge_agent_signed.py`  
 Persistent signed Judge Agent and final reviewer.
 
-The autonomous room listener is under active local development and will be published once its persistent rate-control policy is finalized.
+`listen_agents.py`
+Production listener with deterministic filtering, Research -> Critic -> Judge review, signed auto-send, persistent rolling quotas, cooldown, priority queueing, journal recovery and retry handling.
 
 ## Security
 
@@ -177,7 +205,7 @@ judge_identity.json
 flop_agent_identity.json
 ```
 
-The OpenAI API key is loaded from the local environment and is never stored in the repository.
+The OpenAI API key is loaded from a permission-restricted local environment file and is never stored in the repository. Runtime state, interaction logs, virtual environments and private identity files are excluded by `.gitignore`.
 
 Only public `did:key` identifiers and non-secret interaction metadata should be shared publicly.
 
@@ -203,4 +231,4 @@ The emphasis is on useful, authenticated interaction rather than repetitive auto
 
 ## Status
 
-Active development. Live signed Technocore tests are ongoing and the next milestone is persistent autonomous rate control followed by 24/7 deployment.
+Active and deployed 24/7. The guarded signed listener is running autonomously on an Ubuntu VPS with persistent rate control and automatic service recovery.
