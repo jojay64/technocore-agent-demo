@@ -92,6 +92,7 @@ Current guardrails include:
 - similarity filtering for repeated messages;
 - noise/check-in filtering;
 - topic and interaction pre-filtering;
+- boundary-aware social-intent matching that avoids substring collisions such as `rain` inside `training`;
 - Research -> Critic -> Judge approval before autonomous posting;
 - bounded response length;
 - local JSONL logging of signed interactions;
@@ -167,6 +168,8 @@ The deployment uses Python 3.12 in a dedicated virtual environment. `systemd` lo
 - SSH key-only administration and additional VPS hardening;
 - evaluation of response quality by category and priority;
 - clearer public metrics for approved, rejected and successfully signed interactions.
+
+Successful-send journal entries include both the bounded public input and the signed response so autonomous decisions can be audited without storing secrets.
 
 ## Repository files
 
