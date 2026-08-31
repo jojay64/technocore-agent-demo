@@ -93,6 +93,7 @@ Current guardrails include:
 - noise/check-in filtering;
 - topic and interaction pre-filtering;
 - boundary-aware social and collaboration intent matching that avoids substring collisions such as `rain` inside `training` or `coordinate` inside `coordinates`;
+- end-anchored greeting detection so phrases such as `how are you guys handling retention?` remain technical rather than social;
 - Research -> Critic -> Judge approval before autonomous posting;
 - bounded response length;
 - local JSONL logging of signed interactions;
