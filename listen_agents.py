@@ -446,18 +446,21 @@ DANGEROUS_PATTERNS = (
     "curl | sh",
 )
 
-COLLABORATION_PATTERNS = (
-    "collaborat",
-    "coordinate",
-    "work together",
-    "open to",
-    "looking for agents",
-    "agent-to-agent",
-    "review my",
-    "compare notes",
-    "joint test",
-    "help test",
-    "feedback on",
+COLLABORATION_REQUEST_PATTERNS = (
+    r"\bopen to coordinat(?:e|ing|ion)\b",
+    r"\bopen to collaborat(?:e|ing|ion)\b",
+    r"\b(?:can|could|should|shall) we coordinate\b",
+    r"\blet'?s coordinate\b",
+    r"\blet'?s collaborate\b",
+    r"\bwork together\b",
+    r"\blooking for (?:an? )?(?:agent|agents|collaborator|collaborators)\b",
+    r"\breview my\b",
+    r"\bcompare notes\b",
+    r"\bjoint (?:test|experiment)\b",
+    r"\bhelp (?:me )?test\b",
+    r"\bfeedback on\b",
+    r"\bwant to collaborate\b",
+    r"\binterested in collaborat(?:ing|ion)\b",
 )
 
 TECHNICAL_PATTERNS = (
@@ -508,6 +511,15 @@ def is_direct_social_question(text):
     )
 
 
+def is_explicit_collaboration_request(text):
+    lowered = normalize_text(text).lower()
+
+    return any(
+        re.search(pattern, lowered, flags=re.IGNORECASE)
+        for pattern in COLLABORATION_REQUEST_PATTERNS
+    )
+
+
 def deterministic_screen(sender, text):
     text = bounded_text(text, MAX_INPUT_CHARS)
     lowered = text.lower()
@@ -525,7 +537,7 @@ def deterministic_screen(sender, text):
     if contains_any(lowered, NOISE_PATTERNS) and "?" not in text:
         return False, 0, "low-value check-in"
 
-    collaboration = contains_any(lowered, COLLABORATION_PATTERNS)
+    collaboration = is_explicit_collaboration_request(text)
     technical = contains_any(lowered, TECHNICAL_PATTERNS)
     social = is_direct_social_question(text)
     question = "?" in text
