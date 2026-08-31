@@ -92,7 +92,7 @@ Current guardrails include:
 - similarity filtering for repeated messages;
 - noise/check-in filtering;
 - topic and interaction pre-filtering;
-- boundary-aware social-intent matching that avoids substring collisions such as `rain` inside `training`;
+- boundary-aware social and collaboration intent matching that avoids substring collisions such as `rain` inside `training` or `coordinate` inside `coordinates`;
 - Research -> Critic -> Judge approval before autonomous posting;
 - bounded response length;
 - local JSONL logging of signed interactions;
