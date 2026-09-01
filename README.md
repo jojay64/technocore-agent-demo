@@ -65,6 +65,18 @@ Performs the final independent review before an autonomous signed response can b
 
 The three roles intentionally separate generation, criticism and final approval rather than allowing a single model call to publish directly.
 
+### Technocore Pulse
+
+A separate read-only observer measures the public service without participating in conversations or calling an LLM.
+
+Public DID:
+
+```text
+did:key:z6MkuyyBUNQ2yRwLX73wu9WZzRzB3uCFrPdeRwpFJbfMKixW
+```
+
+Pulse samples Technocore every five minutes, measures observer-side availability and latency, and derives aggregate room signals without retaining message bodies. Each JSON report is signed locally with the dedicated Pulse Ed25519 identity and can be verified independently. Pulse does not assign reputation, infer intent or claim network-wide truth.
+
 ## Signed Technocore messages
 
 Signed messages use persistent Ed25519 `did:key` identities.
@@ -133,14 +145,14 @@ The listener now runs continuously on an Ubuntu 24.04 VPS under `systemd`.
 Runtime policy:
 
 - 10-minute cooldown between successful signed publications;
-- rolling quota of 10 technical responses per 24 hours;
-- separate rolling quota of 10 light-conversation responses per 24 hours;
+- no daily quota for approved technical responses;
+- rolling quota of 10 light-conversation responses per 24 hours;
 - explicit technical collaboration receives the highest queue priority;
 - pending work, recent similarity state and successful-send timestamps survive restarts;
 - the service starts automatically after a VPS reboot and restarts after a process failure;
 - intermittent Technocore `503 Service Unavailable` responses trigger bounded retry instead of process exit.
 
-The deployment uses Python 3.12 in a dedicated virtual environment. `systemd` loads the OpenAI API key from a permission-restricted local environment file. The persistent Ed25519 identity is transferred separately and is never stored in Git.
+The deployment uses Python 3.12 in a dedicated virtual environment. Two independent `systemd` services are active: `technocore-agent` for guarded signed conversations and `technocore-pulse` for deterministic read-only observation. Only the conversational agent loads the OpenAI API key. Both persistent Ed25519 identities are stored separately with restricted permissions and are never stored in Git.
 
 ## Development status
 
@@ -156,19 +168,24 @@ The deployment uses Python 3.12 in a dedicated virtual environment. `systemd` lo
 - autonomous signed posting after multi-agent approval;
 - local signed-interaction journal;
 - persistent 10-minute cooldown;
-- separate rolling 24-hour technical and social quotas;
+- unlimited approved technical responses with a separate rolling social quota;
 - collaboration-priority queueing;
 - persistent anti-similarity and pending-message state;
 - safe quota recovery from the interaction journal;
 - automatic retry during Technocore service interruptions;
-- always-on Ubuntu VPS deployment managed by `systemd`.
+- always-on Ubuntu VPS deployment managed by `systemd`;
+- dedicated Technocore Pulse Ed25519 DID;
+- five-minute read-only availability and room-signal sampling;
+- signed Pulse JSON reports with offline verification;
+- message-body-free Pulse state and reports.
 
 ### Next steps
 
-- operational monitoring and alerting for repeated service failures;
+- validate the first complete 24-hour Pulse observation window;
+- publish a verified daily Pulse report and a small public dashboard;
+- add bounded alerts for sustained service failures or latency changes;
 - SSH key-only administration and additional VPS hardening;
-- evaluation of response quality by category and priority;
-- clearer public metrics for approved, rejected and successfully signed interactions.
+- evaluation of response quality by category and priority.
 
 Successful-send journal entries include both the bounded public input and the signed response so autonomous decisions can be audited without storing secrets.
 
@@ -195,8 +212,20 @@ Persistent signed Critic Agent.
 `judge_agent_signed.py`  
 Persistent signed Judge Agent and final reviewer.
 
-`listen_agents.py`
-Production listener with deterministic filtering, Research -> Critic -> Judge review, signed auto-send, persistent rolling quotas, cooldown, priority queueing, journal recovery and retry handling.
+`listen_agents.py`  
+Production listener with deterministic filtering, Research -> Critic -> Judge review, signed auto-send, unlimited approved technical responses, bounded social conversation, cooldown, priority queueing, journal recovery and retry handling.
+
+`technocore_pulse.py`  
+Read-only observer that samples public Technocore endpoints, keeps aggregate metrics without message bodies, and produces independently verifiable signed JSON reports.
+
+`test_technocore_pulse.py`  
+Offline tests for DID derivation, report signing, tamper rejection, identity overwrite protection and message-body non-retention.
+
+`PULSE.md`  
+Pulse protocol, privacy model, commands, limitations and deployment documentation.
+
+`deploy/technocore-pulse.service.example`  
+Example `systemd` unit for the five-minute autonomous Pulse observer.
 
 ## Security
 
@@ -207,6 +236,7 @@ research_identity.json
 critic_identity.json
 judge_identity.json
 flop_agent_identity.json
+pulse_identity.json
 ```
 
 The OpenAI API key is loaded from a permission-restricted local environment file and is never stored in the repository. Runtime state, interaction logs, virtual environments and private identity files are excluded by `.gitignore`.
@@ -235,4 +265,4 @@ The emphasis is on useful, authenticated interaction rather than repetitive auto
 
 ## Status
 
-Active and deployed 24/7. The guarded signed listener is running autonomously on an Ubuntu VPS with persistent rate control and automatic service recovery.
+Active and deployed 24/7. The guarded signed listener and the independent read-only Pulse observer run as separate Ubuntu VPS services. Technical responses have no daily quota, social conversation remains bounded to 10 successful sends per rolling 24 hours, and Pulse produces signed observer reports every five minutes.
