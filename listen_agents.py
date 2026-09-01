@@ -31,11 +31,7 @@ HTTP_TIMEOUT_SECONDS = 25
 
 COOLDOWN_SECONDS = 10 * 60
 QUOTA_WINDOW_SECONDS = 24 * 60 * 60
-MAX_TECHNICAL_SENDS_24H = 10
 MAX_SOCIAL_SENDS_24H = 10
-MAX_SUCCESSFUL_SENDS_24H = (
-    MAX_TECHNICAL_SENDS_24H + MAX_SOCIAL_SENDS_24H
-)
 
 MAX_INPUT_CHARS = 1800
 MAX_RESPONSE_CHARS = 600
@@ -734,19 +730,15 @@ Return JSON only:
 def quota_status(state):
     prune_state(state)
     sends = state["successful_sends"]
-    remaining = max(0, MAX_SUCCESSFUL_SENDS_24H - len(sends))
-
-    if remaining > 0:
-        quota_wait = 0
-    else:
-        quota_wait = max(0, sends[0] + QUOTA_WINDOW_SECONDS - time.time())
 
     if not sends:
         cooldown_wait = 0
     else:
         cooldown_wait = max(0, sends[-1] + COOLDOWN_SECONDS - time.time())
 
-    return remaining, cooldown_wait, quota_wait
+    # Technical replies have no 24 h quota. Keep this tuple shape so both
+    # rate-limit checks continue to fail closed around the network send.
+    return 1, cooldown_wait, 0
 
 
 def category_counts(state):
@@ -774,15 +766,11 @@ def enqueue_message(message, state):
         return
 
     prune_state(state)
-    technical_count, social_count = category_counts(state)
+    _, social_count = category_counts(state)
 
     if priority == 30 and social_count >= MAX_SOCIAL_SENDS_24H:
         print(f"FILTERED seq {seq}: 24 h social-conversation quota already used")
         return
-    if priority != 30 and technical_count >= MAX_TECHNICAL_SENDS_24H:
-        print(f"FILTERED seq {seq}: 24 h technical-response quota already used")
-        return
-
     duplicate, score = is_duplicate_or_similar(text, state)
     if duplicate:
         print(f"FILTERED seq {seq}: duplicate/similarity {score:.2f}")
@@ -812,7 +800,7 @@ def process_next(private_key, did, state):
     if not state["pending"]:
         return False, "queue empty"
 
-    technical_count, social_count = category_counts(state)
+    _, social_count = category_counts(state)
     selected_index = None
 
     for index, candidate in enumerate(state["pending"]):
@@ -820,12 +808,12 @@ def process_next(private_key, did, state):
         if is_social and social_count < MAX_SOCIAL_SENDS_24H:
             selected_index = index
             break
-        if not is_social and technical_count < MAX_TECHNICAL_SENDS_24H:
+        if not is_social:
             selected_index = index
             break
 
     if selected_index is None:
-        return False, "technical and social 24 h category quotas are full"
+        return False, "social quota full and no technical message queued"
 
     item = state["pending"].pop(selected_index)
     save_state(state)
@@ -1033,9 +1021,8 @@ def main():
     print("Research DID:", did)
     print("Pipeline: Research -> Critic -> Judge -> signed AUTO-SEND")
     print("Cooldown:", COOLDOWN_SECONDS // 60, "minutes")
-    print("Technical-response quota:", MAX_TECHNICAL_SENDS_24H, "per 24 h")
+    print("Technical-response quota: unlimited")
     print("Light-conversation quota:", MAX_SOCIAL_SENDS_24H, "per 24 h")
-    print("Maximum combined quota:", MAX_SUCCESSFUL_SENDS_24H, "per 24 h")
     print("Similarity threshold:", SIMILARITY_THRESHOLD)
     print("State file:", STATE_FILE)
     print("Starting sequence:", state["last_sequence"])
