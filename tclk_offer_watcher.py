@@ -326,9 +326,16 @@ def forbidden_task(text):
         "curl | sh", "powershell", "sudo ", "rm -rf", "send funds",
         "transfer funds", "buy token", "sell token", "connect wallet",
         "sign this transaction", "sign arbitrary", "upload file", "email this",
-        "post this", "contact this person",
+        "post this", "contact this person", "signed message", "deal thread",
+        "acceptor did", "tclk-attest",
     )
-    return any(pattern in lowered for pattern in patterns)
+    publication_patterns = (
+        r"(?:deliverable|task)\s*[\"']?\s*:\s*[\"'][^\"']*\b(?:x post|tweet|article)\b",
+        r"\b(?:write|draft|create|publish|post)\b.{0,40}\b(?:x post|tweet|article)\b",
+    )
+    return any(pattern in lowered for pattern in patterns) or any(
+        re.search(pattern, lowered) for pattern in publication_patterns
+    )
 
 
 def deterministic_screen(record, frame, task):
@@ -357,17 +364,29 @@ def deterministic_screen(record, frame, task):
 
 
 def model_json(instructions, data):
-    response = get_client().responses.create(
-        model=MODEL, instructions=instructions,
-        input=json.dumps(data, ensure_ascii=False), max_output_tokens=MAX_MODEL_TOKENS,
-    )
-    match = re.search(r"\{.*\}", response.output_text.strip(), re.DOTALL)
-    if not match:
-        raise ValueError("model returned no JSON object")
-    result = json.loads(match.group(0))
-    if not isinstance(result, dict):
-        raise ValueError("model JSON is not an object")
-    return result
+    for attempt in range(2):
+        retry_instruction = ""
+        if attempt:
+            retry_instruction = (
+                "\nYour previous response was invalid. Return exactly one compact JSON "
+                "object matching the requested keys, with no markdown or commentary."
+            )
+        response = get_client().responses.create(
+            model=MODEL,
+            instructions=instructions + retry_instruction,
+            input=json.dumps(data, ensure_ascii=False),
+            max_output_tokens=MAX_MODEL_TOKENS if attempt == 0 else 400,
+        )
+        match = re.search(r"\{.*\}", response.output_text.strip(), re.DOTALL)
+        if not match:
+            continue
+        try:
+            result = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(result, dict):
+            return result
+    raise ValueError("model returned no valid JSON object after one retry")
 
 
 def research_review(frame, task):
