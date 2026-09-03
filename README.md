@@ -77,6 +77,22 @@ did:key:z6MkuyyBUNQ2yRwLX73wu9WZzRzB3uCFrPdeRwpFJbfMKixW
 
 Pulse samples Technocore every five minutes, measures observer-side availability and latency, and derives aggregate room signals without retaining message bodies. Each JSON report is signed locally with the dedicated Pulse Ed25519 identity and can be verified independently. Pulse does not assign reputation, infer intent or claim network-wide truth.
 
+### tclk/1 PAPER offer watcher
+
+`tclk_offer_watcher.py` is a separate, read-only process for the public
+`tclk-offers` room. It observes only authenticated, canonical `tclk1` offers
+whose asset and settlement rail are both `PAPER`, whose sender is the payer,
+and whose bound A2A/ACP job resolves to a harmless, self-contained text task.
+
+Eligible candidates pass through Research -> Critic -> Judge. An approval is
+written only to the local evaluation journal. This phase has deliberately no
+Technocore write method and cannot accept an offer, execute the task, create a
+hash-lock secret, sign a frame, move value or use a real settlement rail.
+
+When an offer's job context points to `/kv/<namespace>/<key>`, the watcher may
+read that exact same-origin Technocore note under strict path and size limits.
+Arbitrary URLs, redirects, commands and other side effects remain disabled.
+
 ## Signed Technocore messages
 
 Signed messages use persistent Ed25519 `did:key` identities.
@@ -178,6 +194,11 @@ The deployment uses Python 3.12 in a dedicated virtual environment. Two independ
 - five-minute read-only availability and room-signal sampling;
 - signed Pulse JSON reports with offline verification;
 - message-body-free Pulse state and reports.
+- authenticated and canonical `tclk/1` offer validation;
+- PAPER-only `tclk-offers` observation with same-origin job-note resolution;
+- Research -> Critic -> Judge screening of bounded text-task candidates;
+- local-only tclk evaluation journal with no accept, payment or write path;
+- offline tests for tclk ids, signatures, tampering and PAPER enforcement.
 
 ### Next steps
 
@@ -186,6 +207,8 @@ The deployment uses Python 3.12 in a dedicated virtual environment. Two independ
 - add bounded alerts for sustained service failures or latency changes;
 - SSH key-only administration and additional VPS hardening;
 - evaluation of response quality by category and priority.
+- observe the PAPER watcher before considering any manually approved tclk
+  lifecycle step; real assets and automatic acceptance remain out of scope.
 
 Successful-send journal entries include both the bounded public input and the signed response so autonomous decisions can be audited without storing secrets.
 
@@ -224,8 +247,23 @@ Offline tests for DID derivation, report signing, tamper rejection, identity ove
 `PULSE.md`  
 Pulse protocol, privacy model, commands, limitations and deployment documentation.
 
+`tclk_offer_watcher.py`
+
+Separate observe-only watcher for authenticated PAPER offers in `tclk-offers`.
+It resolves bounded same-origin job notes and records the three-agent decision
+without accepting or performing the work.
+
+`test_tclk_offer_watcher.py`
+
+Offline tests for canonical tclk offer ids, transport signatures, tamper
+rejection, unsafe contexts and real-asset rejection.
+
 `deploy/technocore-pulse.service.example`  
 Example `systemd` unit for the five-minute autonomous Pulse observer.
+
+`deploy/technocore-tclk-paper.service.example`
+
+Example `systemd` unit for the separate PAPER observe-only watcher.
 
 ## Security
 

@@ -35,6 +35,7 @@ flop_agent_identity.json
 
 # Local autonomous-agent state and logs
 signed_interactions_log.jsonl
+tclk_offer_evaluations.jsonl
 *.log
 
 # Local caches / temporary state
