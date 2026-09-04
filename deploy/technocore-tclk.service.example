@@ -1,0 +1,27 @@
+[Unit]
+Description=Technocore guarded tclk PAPER transcript agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/technocore-agent-demo
+EnvironmentFile=/home/ubuntu/technocore-agent-demo/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=TCLK_IDENTITY_FILE=/home/ubuntu/technocore-agent-demo/research_identity.json
+Environment=TCLK_AGENT_STATE_FILE=/home/ubuntu/technocore-agent-demo/.cache/tclk_agent_state.json
+Environment=TCLK_DECISION_LOG=/home/ubuntu/technocore-agent-demo/.cache/tclk_agent_decisions.jsonl
+Environment=TCLK_TRANSCRIPT_LOG=/home/ubuntu/technocore-agent-demo/.cache/tclk_signed_transcripts.jsonl
+ExecStart=/home/ubuntu/technocore-agent-demo/.venv/bin/python /home/ubuntu/technocore-agent-demo/tclk_agent.py
+Restart=always
+RestartSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/technocore-agent-demo/.cache
+
+[Install]
+WantedBy=multi-user.target

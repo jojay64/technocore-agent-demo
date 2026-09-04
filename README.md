@@ -253,10 +253,32 @@ Separate observe-only watcher for authenticated PAPER offers in `tclk-offers`.
 It resolves bounded same-origin job notes and records the three-agent decision
 without accepting or performing the work.
 
+### tclk/1 signed transcript agent
+
+`tclk_agent.py` is the guarded successor used for the next PAPER phase. It
+keeps the historical Research DID as a strict startup invariant, evaluates
+text-only offers through Research -> Critic -> Judge, and records complete
+signed transport records for approved candidate deals. It follows derived deal
+rooms and folds `lock`, `heartbeat`, `reveal`, `refund`, `cancel`, and `receipt`
+frames without treating heartbeat as a state transition. This release remains
+observe-only: it has no signed-write, accept, secret, settlement, payment, or
+identity-generation path.
+
 `test_tclk_offer_watcher.py`
 
 Offline tests for canonical tclk offer ids, transport signatures, tamper
 rejection, unsafe contexts and real-asset rejection.
+
+`tclk_agent.py`
+
+Independent PAPER transcript agent with strict historical-identity checks,
+complete signed-record journaling, candidate deal tracking and heartbeat-aware
+fail-closed state folding.
+
+`test_tclk_agent.py`
+
+Offline tests for room-bound signatures, transcript completeness, contract-id
+derivation, heartbeat invariants and identity mismatch refusal.
 
 `deploy/technocore-pulse.service.example`  
 Example `systemd` unit for the five-minute autonomous Pulse observer.
@@ -264,6 +286,10 @@ Example `systemd` unit for the five-minute autonomous Pulse observer.
 `deploy/technocore-tclk-paper.service.example`
 
 Example `systemd` unit for the separate PAPER observe-only watcher.
+
+`deploy/technocore-tclk.service.example`
+
+Hardened `systemd` unit for the heartbeat-aware signed transcript agent.
 
 ## Security
 
