@@ -60,6 +60,31 @@ def verify_commerce_activation():
     return REQUIRED_COMMERCE_MODE
 
 
+def clean_private_state():
+    return {"version": 1, "owned_contracts": {}}
+
+
+def load_private_state():
+    if not PRIVATE_STATE_FILE.exists():
+        return clean_private_state()
+    if PRIVATE_STATE_FILE.stat().st_mode & 0o077:
+        raise RuntimeError("private commerce state permissions must be 600")
+    loaded = json.loads(PRIVATE_STATE_FILE.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict) or not isinstance(loaded.get("owned_contracts"), dict):
+        raise RuntimeError("private commerce state is invalid")
+    return loaded
+
+
+def save_private_state(value):
+    previous_umask = os.umask(0o077)
+    try:
+        guard.atomic_json(PRIVATE_STATE_FILE, value)
+        os.chmod(PRIVATE_STATE_FILE, 0o600)
+    finally:
+        os.umask(previous_umask)
+
+
+
 def append_jsonl(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:

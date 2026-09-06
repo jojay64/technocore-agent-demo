@@ -59,6 +59,25 @@ class TclkAgentTests(unittest.TestCase):
             self.assertEqual(agent.verify_commerce_activation(), "PAPER_COMMERCE")
 
 
+    def test_private_state_is_written_with_mode_600(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "private.json"
+            value = {"version": 1, "owned_contracts": {"test": {"secret": "hidden"}}}
+            with patch.object(agent, "PRIVATE_STATE_FILE", path):
+                agent.save_private_state(value)
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(agent.load_private_state(), value)
+
+    def test_private_state_rejects_permissive_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "private.json"
+            path.write_text(json.dumps(agent.clean_private_state()), encoding="utf-8")
+            path.chmod(0o644)
+            with patch.object(agent, "PRIVATE_STATE_FILE", path):
+                with self.assertRaisesRegex(RuntimeError, "permissions must be 600"):
+                    agent.load_private_state()
+
+
     def test_complete_transport_record_verifies(self):
         private, did = identity()
         frame = {
