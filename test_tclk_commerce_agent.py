@@ -52,13 +52,15 @@ class TclkAgentTests(unittest.TestCase):
         now = 1700000000000
         record = {"sender": payer, "timestamp_ms": now}
         frame = {
-            "from": payer, "role": "payer", "amount": "10",
+            "type": "offer", "from": payer, "role": "payer", "amount": "10",
             "asset": "PAPER", "lock": "hash", "rails": ["paper"],
             "expiresMs": now + 120000,
             "claimByMs": now + 300000,
             "refundAfterMs": now + 480000,
             "job": {"proto": "a2a", "id": "job-1", "context": "inline"},
+            "nonce": "12345678",
         }
+        frame["id"] = guard.offer_id(frame)
         return record, frame
 
 
@@ -93,6 +95,25 @@ class TclkAgentTests(unittest.TestCase):
         )
         self.assertFalse(allowed)
         self.assertIn("expires too soon", reason)
+
+
+    def test_owned_accept_is_canonical_and_keeps_secret_out_of_frame(self):
+        _, offer = self.commerce_fixture()
+        secret = bytes.fromhex("ab" * 32)
+        accept, encoded_secret = agent.build_owned_accept(
+            offer, secret_bytes=secret, nonce="abcdef1234567890"
+        )
+        self.assertEqual(accept["from"], agent.EXPECTED_DID)
+        self.assertNotIn("secret", accept)
+        self.assertEqual(encoded_secret, "0x" + secret.hex())
+        self.assertEqual(accept["statement"], "0x" + hashlib.sha256(secret).hexdigest())
+        self.assertEqual(accept["contract"], agent.contract_id(offer, accept))
+
+    def test_owned_accept_rejects_non_paper_offer(self):
+        _, offer = self.commerce_fixture()
+        offer["asset"] = "REAL"
+        with self.assertRaisesRegex(ValueError, "PAPER hash-lock only"):
+            agent.build_owned_accept(offer)
 
 
     def test_commerce_requires_explicit_activation(self):

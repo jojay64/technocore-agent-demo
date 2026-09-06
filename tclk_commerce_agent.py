@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import time
 import urllib.error
 import urllib.parse
@@ -246,6 +247,34 @@ def decode_frame(line):
     if frame_type == "heartbeat" and "note" in frame and not isinstance(frame["note"], str):
         raise ValueError("heartbeat note is invalid")
     return frame
+
+
+def build_owned_accept(offer, secret_bytes=None, nonce=None):
+    if offer.get("role") != "payer" or offer.get("from") == EXPECTED_DID:
+        raise ValueError("offer cannot make the historical DID the payee")
+    if offer.get("asset") != "PAPER" or offer.get("lock") != "hash":
+        raise ValueError("accept builder supports PAPER hash-lock only")
+    if offer.get("rails") != ["paper"]:
+        raise ValueError("accept builder requires exactly one paper rail")
+    if offer.get("id") != guard.offer_id(offer):
+        raise ValueError("offer id is not canonical")
+    if secret_bytes is None:
+        secret_bytes = secrets.token_bytes(32)
+    if not isinstance(secret_bytes, bytes) or len(secret_bytes) != 32:
+        raise ValueError("contract secret must contain exactly 32 bytes")
+    nonce = nonce or secrets.token_hex(16)
+    if not FRAME_NONCE.fullmatch(nonce):
+        raise ValueError("accept nonce is invalid")
+    accept = {
+        "type": "accept",
+        "from": EXPECTED_DID,
+        "ref": offer["id"],
+        "statement": "0x" + hashlib.sha256(secret_bytes).hexdigest(),
+        "nonce": nonce,
+    }
+    accept["contract"] = contract_id(offer, accept)
+    return accept, "0x" + secret_bytes.hex()
+
 
 
 def contract_id(offer, accept):
