@@ -762,6 +762,79 @@ class TclkAgentTests(unittest.TestCase):
         reveal_post.assert_called_once()
 
 
+    def test_approved_offer_stages_and_publishes_one_accept(self):
+        private, did = identity()
+        record, offer = self.commerce_fixture()
+        record.update({
+            "room": agent.OFFER_ROOM, "ts": "2023-11-14T22:13:20Z",
+            "nonce": "12345", "signature": "test-signature",
+            "line": "tclk1 " + guard.canonical_json(offer),
+        })
+        state = agent.clean_state()
+        state["commerce_start_seq"] = 81
+        runtime = {
+            "private_key": private, "did": did,
+            "private_state": agent.clean_private_state(),
+        }
+        approval = {"decision": "APPROVE", "reason": "safe"}
+        contract = "0x" + "66" * 32
+        staged = {"contract": contract}
+        accepted_record = {"seq": 100}
+        with patch.object(agent.guard, "resolve_context", return_value=(
+            "Calculate 17 plus 25 and answer with one integer.", "inline"
+        )), patch.object(agent.guard, "research_review", return_value=approval), patch.object(
+            agent.guard, "critic_review", return_value=approval
+        ), patch.object(agent.guard, "judge_review", return_value=approval), patch.object(
+            agent, "stage_owned_accept", return_value=staged
+        ) as stage, patch.object(
+            agent, "publish_staged_accept", return_value=accepted_record
+        ) as publish, patch.object(agent, "append_jsonl"), patch.object(agent, "save_state"):
+            agent.evaluate_offer(record, offer, state, runtime)
+        stage.assert_called_once()
+        publish.assert_called_once()
+
+
+    def test_locked_contract_advances_through_delivery_and_claim(self):
+        private, did, state, private_state, contract = self.locked_contract_fixture()
+        runtime = {"private_key": private, "did": did, "private_state": private_state}
+        owned = state["owned_contracts"][contract]
+        order = []
+        def pipeline(*args):
+            order.append("pipeline")
+            owned["status"] = "ready_to_deliver"
+        def delivery(*args):
+            order.append("delivery")
+            owned["status"] = "delivered"
+        def reveal(*args):
+            order.append("reveal_claim")
+            owned["status"] = "claimed"
+        with patch.object(agent, "run_owned_pipeline", side_effect=pipeline), patch.object(
+            agent, "publish_owned_delivery", side_effect=delivery
+        ), patch.object(agent, "publish_reveal_and_claim", side_effect=reveal):
+            status = agent.advance_owned_contract(contract, state, runtime)
+        self.assertEqual(order, ["pipeline", "delivery", "reveal_claim"])
+        self.assertEqual(status, "claimed")
+
+
+    def test_resume_never_retries_uncertain_network_writes(self):
+        state = agent.clean_state()
+        state["owned_contracts"] = {
+            "accept": {"status": "accept_uncertain"},
+            "delivery": {"status": "delivery_uncertain"},
+            "reveal": {"status": "reveal_uncertain"},
+        }
+        runtime = {
+            "private_key": object(), "did": agent.EXPECTED_DID,
+            "private_state": agent.clean_private_state(),
+        }
+        with patch.object(agent, "publish_staged_accept") as accept, patch.object(
+            agent, "advance_owned_contract"
+        ) as advance:
+            agent.resume_owned_work(state, runtime)
+        accept.assert_not_called()
+        advance.assert_not_called()
+
+
     def test_commerce_requires_explicit_activation(self):
         with patch.object(agent, "COMMERCE_MODE", "DISABLED"):
             with self.assertRaisesRegex(RuntimeError, "commerce is disabled"):

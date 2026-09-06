@@ -963,7 +963,7 @@ def commerce_offer_screen(record, frame, task, source):
 
 
 
-def evaluate_offer(record, frame, state):
+def evaluate_offer(record, frame, state, runtime):
     if frame["id"] in state["candidate_offers"]:
         return
     try:
@@ -986,7 +986,7 @@ def evaluate_offer(record, frame, state):
         "result": "candidate_approved" if approved else "rejected",
         "task_specification": task, "context_source": source,
         "research": research, "critic": critic, "judge": judge,
-        "mode": "PAPER_OBSERVE_ONLY",
+        "mode": "PAPER_COMMERCE",
     })
     append_jsonl(DECISION_LOG, decision)
     if not approved:
@@ -997,7 +997,26 @@ def evaluate_offer(record, frame, state):
     }
     append_jsonl(TRANSCRIPT_LOG, state["candidate_offers"][frame["id"]]["record"])
     save_state(state)
-    print(f"CANDIDATE APPROVED {frame['id']} — transcript tracking enabled; no action sent")
+    try:
+        accept = stage_owned_accept(
+            record, frame, task, source, state, runtime["private_state"]
+        )
+        accepted_record = publish_staged_accept(
+            accept["contract"], state, runtime["private_state"],
+            runtime["private_key"], runtime["did"]
+        )
+        append_jsonl(DECISION_LOG, {
+            "logged_at": time.time(), "result": "accept_published",
+            "offer_id": frame["id"], "contract": accept["contract"],
+            "seq": accepted_record["seq"],
+        })
+        print(f"PAPER ACCEPTED {accept["contract"]} at seq {accepted_record["seq"]}")
+    except Exception as error:
+        append_jsonl(DECISION_LOG, {
+            "logged_at": time.time(), "result": "candidate_not_accepted",
+            "offer_id": frame["id"], "reason": str(error)[:300],
+        })
+        print(f"PAPER ACCEPT BLOCKED {frame["id"]}: {error}")
 
 
 def publish_staged_accept(contract_id_value, state, private_state, private_key, did):
@@ -1040,14 +1059,14 @@ def publish_staged_accept(contract_id_value, state, private_state, private_key, 
 
 
 
-def process_offer_room(message, state):
+def process_offer_room(message, state, runtime):
     record = transport_record(OFFER_ROOM, message)
     verify_transport(record)
     frame = decode_frame(record["line"])
     if frame is None or frame["from"] != record["sender"]:
         return
     if frame["type"] == "offer":
-        evaluate_offer(record, frame, state)
+        evaluate_offer(record, frame, state, runtime)
         return
     if frame["type"] != "accept" or frame["ref"] not in state["candidate_offers"]:
         return
@@ -1072,6 +1091,47 @@ def process_offer_room(message, state):
         record, frame, "proposed", "accepted", True
     ))
     save_state(state)
+
+
+def advance_owned_contract(contract_id_value, state, runtime):
+    owned = state["owned_contracts"][contract_id_value]
+    if owned["status"] == "locked":
+        run_owned_pipeline(contract_id_value, state)
+    if owned["status"] == "ready_to_deliver":
+        publish_owned_delivery(
+            contract_id_value, state, runtime["private_state"],
+            runtime["private_key"], runtime["did"]
+        )
+    if owned["status"] == "delivered":
+        publish_reveal_and_claim(
+            contract_id_value, state, runtime["private_state"],
+            runtime["private_key"], runtime["did"]
+        )
+    if owned["status"] in {"reveal_published", "claim_uncertain"}:
+        evidence = claim_owned_paper_note(owned, runtime["private_state"])
+        owned["status"] = "claimed"
+        owned["claim_evidence"] = evidence
+        save_state(state)
+        append_jsonl(DECISION_LOG, {
+            "logged_at": time.time(), "result": "paper_claimed",
+            "contract": contract_id_value, "evidence": evidence,
+        })
+    return owned["status"]
+
+
+def resume_owned_work(state, runtime):
+    for contract_id_value, owned in list(state.get("owned_contracts", {}).items()):
+        if owned.get("status") == "accept_staged":
+            publish_staged_accept(
+                contract_id_value, state, runtime["private_state"],
+                runtime["private_key"], runtime["did"]
+            )
+        elif owned.get("status") in {
+            "locked", "ready_to_deliver", "delivered",
+            "reveal_published", "claim_uncertain",
+        }:
+            advance_owned_contract(contract_id_value, state, runtime)
+
 
 
 def process_owned_deal_record(record, frame, state):
@@ -1106,7 +1166,7 @@ def process_owned_deal_record(record, frame, state):
 
 
 
-def process_deal_room(room, message, state):
+def process_deal_room(room, message, state, runtime):
     record = transport_record(room, message)
     verify_transport(record)
     frame = decode_frame(record["line"])
@@ -1115,6 +1175,7 @@ def process_deal_room(room, message, state):
     if frame.get("from") != record["sender"]:
         return
     if process_owned_deal_record(record, frame, state):
+        advance_owned_contract(frame["contract"], state, runtime)
         return
     contract = state["contracts"].get(frame.get("contract"))
     if not contract or contract["room"] != room or frame["from"] != record["sender"]:
@@ -1141,21 +1202,21 @@ def initialize_head(state):
     save_state(state)
 
 
-def poll_room(room, state):
+def poll_room(room, state, runtime):
     since = int(state["room_sequences"].get(room, 0))
     for message in room_messages(room, since):
         if not isinstance(message, dict):
             continue
         seq = message.get("seq")
-        if not isinstance(seq, int) or isinstance(seq, bool) or seq <= since:
+        if not isinstance(seq, int) or isinstance(seq, bool) or seq <= int(state["room_sequences"].get(room, 0)):
             continue
         state["room_sequences"][room] = seq
         save_state(state)
         try:
             if room == OFFER_ROOM:
-                process_offer_room(message, state)
+                process_offer_room(message, state, runtime)
             else:
-                process_deal_room(room, message, state)
+                process_deal_room(room, message, state, runtime)
         except Exception as error:
             append_jsonl(DECISION_LOG, {
                 "logged_at": time.time(), "result": "record_rejected",
@@ -1164,9 +1225,11 @@ def poll_room(room, state):
 
 
 def main():
-    did = verify_historical_identity()
+    private_key, did = load_historical_signer()
     verify_commerce_activation()
     state = load_state()
+    private_state = load_private_state()
+    runtime = {"private_key": private_key, "did": did, "private_state": private_state}
     print("=" * 72)
     print("Technocore tclk/1 guarded transcript agent")
     print("Research DID:", did)
@@ -1182,10 +1245,11 @@ def main():
         initialize_head(state)
     while True:
         try:
-            poll_room(OFFER_ROOM, state)
+            poll_room(OFFER_ROOM, state, runtime)
             for room in list(state["room_sequences"]):
                 if room != OFFER_ROOM:
-                    poll_room(room, state)
+                    poll_room(room, state, runtime)
+            resume_owned_work(state, runtime)
         except KeyboardInterrupt:
             print("Stopped by user")
             return
