@@ -34,7 +34,9 @@ MAX_CONTRACTS = 100
 MAX_OFFERS = 300
 MAX_ACCEPT_HISTORY = 100
 MAX_ACTIVE_OWNED_CONTRACTS = 1
-ACTIVE_OWNED_STATES = {"accept_staged", "accept_sent", "accepted", "locked", "executing", "delivered"}
+MAX_ACCEPTS_PER_24H = 3
+ACCEPT_WINDOW_SECONDS = 86400
+ACTIVE_OWNED_STATES = {"accept_staged", "accept_sending", "accept_uncertain", "accept_sent", "accepted", "locked", "executing", "delivered"}
 MAX_PAPER_AMOUNT = 1000000
 MIN_EXPIRY_MARGIN_MS = 60000
 MIN_DEADLINE_GAP_MS = 120000
@@ -354,6 +356,8 @@ def stage_owned_accept(record, offer, task, source, state, private_state):
         raise ValueError("offer predates the commerce cutover")
     if len(active_owned_contracts(state)) >= MAX_ACTIVE_OWNED_CONTRACTS:
         raise ValueError("an owned contract is already active")
+    if recent_accept_count(state) >= MAX_ACCEPTS_PER_24H:
+        raise ValueError("daily PAPER accept limit reached")
     accept, secret = build_owned_accept(offer)
     contract = accept["contract"]
     if contract in state["owned_contracts"] or contract in private_state["owned_contracts"]:
@@ -381,6 +385,17 @@ def stage_owned_accept(record, offer, task, source, state, private_state):
     state["accept_history"].append({"contract": contract, "staged_at": time.time()})
     save_state(state)
     return accept
+
+
+
+def recent_accept_count(state, now=None):
+    now = time.time() if now is None else now
+    cutoff = now - ACCEPT_WINDOW_SECONDS
+    return sum(
+        1 for item in state.get("accept_history", [])
+        if isinstance(item, dict) and isinstance(item.get("staged_at"), (int, float))
+        and item["staged_at"] >= cutoff
+    )
 
 
 
@@ -573,6 +588,46 @@ def evaluate_offer(record, frame, state):
     append_jsonl(TRANSCRIPT_LOG, state["candidate_offers"][frame["id"]]["record"])
     save_state(state)
     print(f"CANDIDATE APPROVED {frame['id']} — transcript tracking enabled; no action sent")
+
+
+def publish_staged_accept(contract_id_value, state, private_state, private_key, did):
+    owned = state.get("owned_contracts", {}).get(contract_id_value)
+    if not owned or owned.get("status") != "accept_staged":
+        raise ValueError("owned contract is not ready for accept publication")
+    nonce = next_transport_nonce(private_state)
+    outbound = sign_outbound_frame(
+        private_key, did, OFFER_ROOM, owned["accept"], nonce
+    )
+    owned["status"] = "accept_sending"
+    owned["accept_outbound"] = outbound
+    save_state(state)
+    try:
+        record = post_signed_content(outbound)
+    except Exception as error:
+        owned["status"] = "accept_uncertain"
+        owned["last_error"] = str(error)[:300]
+        save_state(state)
+        append_jsonl(DECISION_LOG, {
+            "logged_at": time.time(),
+            "result": "accept_uncertain",
+            "contract": contract_id_value,
+            "reason": str(error)[:300],
+        })
+        raise
+    owned["status"] = "accepted"
+    owned["accept_seq"] = record["seq"]
+    owned["accept_timestamp"] = record["ts"]
+    state["room_sequences"][OFFER_ROOM] = max(
+        int(state["room_sequences"].get(OFFER_ROOM, 0)), record["seq"]
+    )
+    state["room_sequences"].setdefault(owned["room"], 0)
+    append_jsonl(TRANSCRIPT_LOG, transcript_entry(
+        record, owned["accept"], "accept_sending", "accepted", True,
+        "owned PAPER accept published"
+    ))
+    save_state(state)
+    return record
+
 
 
 def process_offer_room(message, state):

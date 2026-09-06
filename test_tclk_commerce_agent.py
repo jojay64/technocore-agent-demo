@@ -263,6 +263,84 @@ class TclkAgentTests(unittest.TestCase):
         self.assertEqual(record["line"], outbound["content"])
 
 
+    def test_daily_accept_limit_is_fail_closed(self):
+        record, offer = self.commerce_fixture()
+        state = agent.clean_state()
+        state["commerce_start_seq"] = 81
+        now = 1700000000.0
+        state["accept_history"] = [
+            {"staged_at": now - 10},
+            {"staged_at": now - 20},
+            {"staged_at": now - 30},
+        ]
+        with patch.object(agent.time, "time", return_value=now):
+            with self.assertRaisesRegex(ValueError, "daily PAPER accept limit"):
+                agent.stage_owned_accept(
+                    record, offer, "Calculate 17 plus 25.", "inline",
+                    state, agent.clean_private_state()
+                )
+        state["accept_history"] = [{"staged_at": now - agent.ACCEPT_WINDOW_SECONDS - 1}]
+        self.assertEqual(agent.recent_accept_count(state, now=now), 0)
+
+
+    def staged_contract_fixture(self):
+        private, did = identity()
+        record, offer = self.commerce_fixture()
+        state = agent.clean_state()
+        state["commerce_start_seq"] = 81
+        private_state = agent.clean_private_state()
+        with patch.object(agent, "EXPECTED_DID", did), patch.object(
+            agent.secrets, "token_bytes", return_value=bytes.fromhex("aa" * 32)
+        ), patch.object(agent.secrets, "token_hex", return_value="bb" * 16), patch.object(
+            agent, "save_private_state"
+        ), patch.object(agent, "save_state"):
+            accept = agent.stage_owned_accept(
+                record, offer, "Calculate 17 plus 25.", "inline", state, private_state
+            )
+        return private, did, state, private_state, accept["contract"]
+
+
+    def test_publish_staged_accept_records_verified_success(self):
+        private, did, state, private_state, contract = self.staged_contract_fixture()
+        owned = state["owned_contracts"][contract]
+        message = signed_message(
+            private, did, agent.OFFER_ROOM, owned["accept"], seq=99, nonce="12345"
+        )
+        record = agent.transport_record(agent.OFFER_ROOM, message)
+        with patch.object(agent, "EXPECTED_DID", did), patch.object(
+            agent, "next_transport_nonce", return_value="12345"
+        ), patch.object(agent, "post_signed_content", return_value=record) as posted, patch.object(
+            agent, "append_jsonl"
+        ) as transcript, patch.object(agent, "save_state"):
+            returned = agent.publish_staged_accept(
+                contract, state, private_state, private, did
+            )
+        self.assertEqual(returned["seq"], 99)
+        self.assertEqual(owned["status"], "accepted")
+        self.assertEqual(owned["accept_seq"], 99)
+        posted.assert_called_once()
+        transcript.assert_called_once()
+
+
+    def test_publish_failure_becomes_uncertain_without_retry(self):
+        private, did, state, private_state, contract = self.staged_contract_fixture()
+        with patch.object(agent, "EXPECTED_DID", did), patch.object(
+            agent, "next_transport_nonce", return_value="12345"
+        ), patch.object(
+            agent, "post_signed_content", side_effect=TimeoutError("simulated timeout")
+        ) as posted, patch.object(agent, "append_jsonl") as decision_log, patch.object(
+            agent, "save_state"
+        ):
+            with self.assertRaises(TimeoutError):
+                agent.publish_staged_accept(
+                    contract, state, private_state, private, did
+                )
+        self.assertEqual(state["owned_contracts"][contract]["status"], "accept_uncertain")
+        self.assertIn("simulated timeout", state["owned_contracts"][contract]["last_error"])
+        posted.assert_called_once()
+        decision_log.assert_called_once()
+
+
     def test_commerce_requires_explicit_activation(self):
         with patch.object(agent, "COMMERCE_MODE", "DISABLED"):
             with self.assertRaisesRegex(RuntimeError, "commerce is disabled"):
