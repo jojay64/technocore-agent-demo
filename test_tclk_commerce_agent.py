@@ -173,6 +173,96 @@ class TclkAgentTests(unittest.TestCase):
             )
 
 
+    def test_outbound_signature_verifies_and_is_bound_to_room(self):
+        private, did = identity()
+        contract = "0x" + "44" * 32
+        room = agent.deal_room(contract)
+        frame = {
+            "type": "heartbeat", "from": did,
+            "contract": contract, "nonce": "abcdef12",
+        }
+        with patch.object(agent, "EXPECTED_DID", did):
+            outbound = agent.sign_outbound_frame(
+                private, did, room, frame, "1700000000000000000"
+            )
+        message = {
+            "seq": 1, "ts": datetime.now(timezone.utc).isoformat(),
+            "from": did, "nonce": outbound["transport_nonce"],
+            "sig": outbound["transport_signature"], "text": outbound["content"],
+        }
+        record = agent.transport_record(room, message)
+        agent.verify_transport(record)
+        wrong_room_record = agent.transport_record(agent.OFFER_ROOM, message)
+        with self.assertRaisesRegex(ValueError, "does not verify"):
+            agent.verify_transport(wrong_room_record)
+
+    def test_outbound_signature_rejects_non_historical_did(self):
+        private, did = identity()
+        with self.assertRaisesRegex(ValueError, "historical Research DID"):
+            agent.sign_outbound_content(private, did, agent.OFFER_ROOM, "test", "12345")
+
+
+    def test_transport_nonce_is_persistent_and_monotonic(self):
+        private_state = agent.clean_private_state()
+        private_state["last_transport_nonce"] = 200
+        with patch.object(agent.time, "time_ns", return_value=100), patch.object(
+            agent, "save_private_state"
+        ) as saved:
+            nonce = agent.next_transport_nonce(private_state)
+        self.assertEqual(nonce, "201")
+        self.assertEqual(private_state["last_transport_nonce"], 201)
+        saved.assert_called_once_with(private_state)
+
+    def test_invalid_private_transport_nonce_is_rejected(self):
+        private_state = agent.clean_private_state()
+        private_state["last_transport_nonce"] = "invalid"
+        with self.assertRaisesRegex(RuntimeError, "nonce is invalid"):
+            agent.next_transport_nonce(private_state)
+
+
+    def test_historical_signer_reuses_existing_identity(self):
+        private, did = identity()
+        raw = private.private_bytes(
+            serialization.Encoding.Raw,
+            serialization.PrivateFormat.Raw,
+            serialization.NoEncryption(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "identity.json"
+            original = json.dumps({"did": did, "private_key_hex": raw.hex()})
+            path.write_text(original, encoding="utf-8")
+            with patch.object(agent, "IDENTITY_FILE", path), patch.object(
+                agent, "EXPECTED_DID", did
+            ):
+                signer, loaded_did = agent.load_historical_signer()
+            self.assertEqual(loaded_did, did)
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+            signer.public_key().verify(signer.sign(b"test"), b"test")
+
+
+    def test_signed_post_returns_verified_server_record(self):
+        private, did = identity()
+        contract = "0x" + "55" * 32
+        room = agent.deal_room(contract)
+        frame = {
+            "type": "heartbeat", "from": did,
+            "contract": contract, "nonce": "abcdef12",
+        }
+        with patch.object(agent, "EXPECTED_DID", did):
+            outbound = agent.sign_outbound_frame(private, did, room, frame, "12345")
+            posted = signed_message(private, did, room, frame, seq=9, nonce="12345")
+            reply = json.dumps({"posted": posted}).encode("utf-8")
+            with patch.object(agent.guard.OPENER, "open") as opened:
+                response = opened.return_value.__enter__.return_value
+                response.read.return_value = reply
+                record = agent.post_signed_content(outbound)
+        request = opened.call_args.args[0]
+        self.assertEqual(request.method, "POST")
+        self.assertNotIn(outbound["transport_signature"], request.full_url)
+        self.assertEqual(record["seq"], 9)
+        self.assertEqual(record["line"], outbound["content"])
+
+
     def test_commerce_requires_explicit_activation(self):
         with patch.object(agent, "COMMERCE_MODE", "DISABLED"):
             with self.assertRaisesRegex(RuntimeError, "commerce is disabled"):

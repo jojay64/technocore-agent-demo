@@ -6,6 +6,7 @@ contracts, and folds heartbeat-aware state.  It contains no write endpoint,
 accept builder, secret, settlement, or identity-generation path.
 """
 
+import base64
 import hashlib
 import json
 import os
@@ -14,6 +15,7 @@ import secrets
 import time
 import urllib.error
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 import tclk_offer_watcher as guard
@@ -71,7 +73,7 @@ def verify_commerce_activation():
 
 
 def clean_private_state():
-    return {"version": 1, "owned_contracts": {}}
+    return {"version": 1, "last_transport_nonce": 0, "owned_contracts": {}}
 
 
 def load_private_state():
@@ -151,7 +153,7 @@ def save_state(state):
     guard.atomic_json(STATE_FILE, state)
 
 
-def verify_historical_identity():
+def verify_historical_identity(return_signer=False):
     if not IDENTITY_FILE.exists():
         raise RuntimeError(f"Missing {IDENTITY_FILE}; identity creation is forbidden")
     try:
@@ -172,7 +174,90 @@ def verify_historical_identity():
     tagged = guard.base58decode(EXPECTED_DID[len("did:key:z"):])
     if tagged != b"\xed\x01" + public:
         raise RuntimeError("Historical Research key does not match its DID")
-    return EXPECTED_DID
+    return (derived, EXPECTED_DID) if return_signer else EXPECTED_DID
+
+
+def next_transport_nonce(private_state):
+    previous = private_state.get("last_transport_nonce", 0)
+    if not isinstance(previous, int) or isinstance(previous, bool) or previous < 0:
+        raise RuntimeError("private transport nonce is invalid")
+    nonce = max(time.time_ns(), previous + 1)
+    private_state["last_transport_nonce"] = nonce
+    save_private_state(private_state)
+    return str(nonce)
+
+
+
+def sign_outbound_content(private_key, did, room, content, nonce):
+    if did != EXPECTED_DID:
+        raise ValueError("outbound signer is not the historical Research DID")
+    if not ROOM_RE.fullmatch(room):
+        raise ValueError("invalid outbound room")
+    nonce = str(nonce)
+    if not guard.TRANSPORT_NONCE.fullmatch(nonce):
+        raise ValueError("invalid outbound transport nonce")
+    if not isinstance(content, str) or not content or len(content) > guard.MAX_FRAME_CHARS:
+        raise ValueError("invalid outbound content length")
+    if "\n" in content or "\r" in content:
+        raise ValueError("outbound content must be one line")
+    payload = f"{room}|{nonce}|{content}".encode("utf-8")
+    signature = base64.urlsafe_b64encode(private_key.sign(payload)).decode("ascii").rstrip("=")
+    return {
+        "room": room, "sender_did": did, "transport_nonce": nonce,
+        "transport_signature": signature, "content": content,
+    }
+
+
+def sign_outbound_frame(private_key, did, room, frame, nonce):
+    content = "tclk1 " + guard.canonical_json(frame)
+    decoded = decode_frame(content)
+    if decoded is None:
+        raise ValueError("outbound content is not a tclk frame")
+    return sign_outbound_content(private_key, did, room, content, nonce)
+
+
+
+def load_historical_signer():
+    return verify_historical_identity(return_signer=True)
+
+
+
+def post_signed_content(outbound):
+    room = outbound["room"]
+    if not ROOM_RE.fullmatch(room):
+        raise ValueError("invalid outbound room")
+    url = f"{guard.BASE_URL}/r/{urllib.parse.quote(room, safe="")}"
+    body = json.dumps({
+        "did": outbound["sender_did"],
+        "sig": outbound["transport_signature"],
+        "nonce": outbound["transport_nonce"],
+        "text": outbound["content"],
+    }, separators=(",", ":")).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "technocore-tclk-paper-commerce/0.1",
+        },
+    )
+    with guard.OPENER.open(request, timeout=guard.HTTP_TIMEOUT_SECONDS) as response:
+        raw = response.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            raise ValueError("signed write response exceeds limit")
+    payload = json.loads(raw.decode("utf-8"))
+    posted = payload.get("posted") if isinstance(payload, dict) else None
+    if not isinstance(posted, dict):
+        raise ValueError("signed write response has no posted record")
+    record = transport_record(room, posted)
+    verify_transport(record)
+    if (record["sender"] != outbound["sender_did"] or
+            record["nonce"] != outbound["transport_nonce"] or
+            record["signature"] != outbound["transport_signature"] or
+            record["line"] != outbound["content"]):
+        raise ValueError("posted record differs from signed outbound content")
+    return record
+
 
 
 def room_messages(room, since, wait_seconds=None):
