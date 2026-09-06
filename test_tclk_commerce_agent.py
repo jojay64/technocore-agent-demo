@@ -835,6 +835,69 @@ class TclkAgentTests(unittest.TestCase):
         advance.assert_not_called()
 
 
+    def test_heartbeat_is_rate_limited_and_state_neutral(self):
+        private, did, state, private_state, contract = self.staged_contract_fixture()
+        owned = state["owned_contracts"][contract]
+        owned["status"] = "accepted"
+        runtime = {"private_key": private, "did": did, "private_state": private_state}
+        def posted(outbound):
+            return {
+                "room": outbound["room"], "seq": 6,
+                "ts": "2023-11-14T22:13:21Z", "timestamp_ms": 1700000001000,
+                "sender": outbound["sender_did"],
+                "nonce": outbound["transport_nonce"],
+                "signature": outbound["transport_signature"],
+                "line": outbound["content"],
+            }
+        with patch.object(agent, "EXPECTED_DID", did), patch.object(
+            agent, "next_transport_nonce", return_value="12345"
+        ), patch.object(agent, "post_signed_content", side_effect=posted) as send, patch.object(
+            agent, "append_jsonl"
+        ), patch.object(agent, "save_state"):
+            agent.maybe_publish_heartbeats(state, runtime, now=1700000000.0)
+            agent.maybe_publish_heartbeats(state, runtime, now=1700000010.0)
+        self.assertEqual(owned["status"], "accepted")
+        self.assertEqual(owned["last_heartbeat_seq"], 6)
+        send.assert_called_once()
+
+
+    def test_waiting_contract_expires_without_late_heartbeat(self):
+        private, did, state, private_state, contract = self.staged_contract_fixture()
+        owned = state["owned_contracts"][contract]
+        owned["status"] = "accepted"
+        runtime = {"private_key": private, "did": did, "private_state": private_state}
+        expired_now = owned["offer"]["claimByMs"] / 1000
+        with patch.object(agent, "post_signed_content") as send, patch.object(
+            agent, "append_jsonl"
+        ), patch.object(agent, "save_state"):
+            agent.maybe_publish_heartbeats(state, runtime, now=expired_now)
+        self.assertEqual(owned["status"], "expired_unlocked")
+        send.assert_not_called()
+
+    def test_late_owned_lock_is_rejected_before_note_read(self):
+        _, _, state, _, contract = self.staged_contract_fixture()
+        owned = state["owned_contracts"][contract]
+        owned["status"] = "accepted"
+        frame = {
+            "type": "lock", "from": owned["payer_did"],
+            "contract": contract, "rail": "paper", "ref": contract,
+        }
+        record = {
+            "room": owned["room"], "seq": 5,
+            "ts": "2023-11-14T22:18:20Z",
+            "timestamp_ms": owned["offer"]["claimByMs"],
+            "sender": owned["payer_did"], "nonce": "12345",
+            "signature": "test-signature",
+            "line": "tclk1 " + guard.canonical_json(frame),
+        }
+        with patch.object(agent, "read_note_value") as note_read, patch.object(
+            agent, "append_jsonl"
+        ), patch.object(agent, "save_state"):
+            agent.process_owned_deal_record(record, frame, state)
+        self.assertEqual(owned["status"], "accepted")
+        note_read.assert_not_called()
+
+
     def test_commerce_requires_explicit_activation(self):
         with patch.object(agent, "COMMERCE_MODE", "DISABLED"):
             with self.assertRaisesRegex(RuntimeError, "commerce is disabled"):

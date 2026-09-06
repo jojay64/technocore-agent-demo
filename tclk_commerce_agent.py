@@ -36,6 +36,7 @@ MAX_ACCEPT_HISTORY = 100
 MAX_ACTIVE_OWNED_CONTRACTS = 1
 MAX_ACCEPTS_PER_24H = 3
 ACCEPT_WINDOW_SECONDS = 86400
+HEARTBEAT_INTERVAL_SECONDS = 300
 ACTIVE_OWNED_STATES = {"accept_staged", "accept_sending", "accept_uncertain", "accept_sent", "accepted", "locked", "executing", "delivered", "execution_failed", "execution_rejected", "ready_to_deliver", "delivery_sending", "delivery_uncertain", "reveal_sending", "reveal_uncertain", "reveal_published", "claim_uncertain"}
 MAX_PAPER_AMOUNT = 1000000
 MIN_EXPIRY_MARGIN_MS = 60000
@@ -1119,6 +1120,55 @@ def advance_owned_contract(contract_id_value, state, runtime):
     return owned["status"]
 
 
+def maybe_publish_heartbeats(state, runtime, now=None):
+    now = time.time() if now is None else now
+    for contract_id_value, owned in list(state.get("owned_contracts", {}).items()):
+        if owned.get("status") != "accepted":
+            continue
+        if int(now * 1000) >= owned["offer"]["claimByMs"]:
+            owned["status"] = "expired_unlocked"
+            save_state(state)
+            append_jsonl(DECISION_LOG, {
+                "logged_at": now, "result": "expired_without_lock",
+                "contract": contract_id_value,
+            })
+            continue
+        last_attempt = owned.get("last_heartbeat_attempt_at", 0)
+        if isinstance(last_attempt, (int, float)) and now - last_attempt < HEARTBEAT_INTERVAL_SECONDS:
+            continue
+        owned["last_heartbeat_attempt_at"] = now
+        save_state(state)
+        frame = {
+            "type": "heartbeat", "from": runtime["did"],
+            "contract": contract_id_value,
+            "nonce": secrets.token_hex(8),
+            "note": "awaiting-paper-lock",
+        }
+        try:
+            nonce = next_transport_nonce(runtime["private_state"])
+            outbound = sign_outbound_frame(
+                runtime["private_key"], runtime["did"], owned["room"], frame, nonce
+            )
+            record = post_signed_content(outbound)
+        except Exception as error:
+            append_jsonl(DECISION_LOG, {
+                "logged_at": now, "result": "heartbeat_failed",
+                "contract": contract_id_value, "reason": str(error)[:300],
+            })
+            continue
+        owned["last_heartbeat_at"] = now
+        owned["last_heartbeat_seq"] = record["seq"]
+        state["room_sequences"][owned["room"]] = max(
+            int(state["room_sequences"].get(owned["room"], 0)), record["seq"]
+        )
+        append_jsonl(TRANSCRIPT_LOG, transcript_entry(
+            record, frame, "accepted", "accepted", True,
+            "owned contract heartbeat; state unchanged"
+        ))
+        save_state(state)
+
+
+
 def resume_owned_work(state, runtime):
     for contract_id_value, owned in list(state.get("owned_contracts", {}).items()):
         if owned.get("status") == "accept_staged":
@@ -1144,6 +1194,8 @@ def process_owned_deal_record(record, frame, state):
     evidence = None
     try:
         if frame["type"] == "lock":
+            if record["timestamp_ms"] >= owned["offer"]["claimByMs"]:
+                raise ValueError("PAPER lock arrived after claim deadline")
             evidence = verify_owned_paper_lock(owned, frame)
         after, valid, reason = apply_contract_frame(
             owned, frame, record["timestamp_ms"]
@@ -1231,13 +1283,13 @@ def main():
     private_state = load_private_state()
     runtime = {"private_key": private_key, "did": did, "private_state": private_state}
     print("=" * 72)
-    print("Technocore tclk/1 guarded transcript agent")
+    print("Technocore tclk/1 guarded PAPER commerce agent")
     print("Research DID:", did)
     print("Offer room  :", OFFER_ROOM)
-    print("Mode        : PAPER OBSERVE-ONLY")
+    print("Mode        : PAPER COMMERCE — PAPER ONLY")
     print("Pipeline    : Research -> Critic -> Judge")
-    print("Heartbeat   : verify + fold + signed transcript")
-    print("Actions     : DISABLED (no write path)")
+    print("Heartbeat   : signed inbound + rate-limited outbound")
+    print("Actions     : accept + execute + verify + deliver + reveal")
     print("Identity    : existing key required; creation/rotation forbidden")
     print("=" * 72)
     if not state["initialized"]:
@@ -1250,6 +1302,7 @@ def main():
                 if room != OFFER_ROOM:
                     poll_room(room, state, runtime)
             resume_owned_work(state, runtime)
+            maybe_publish_heartbeats(state, runtime)
         except KeyboardInterrupt:
             print("Stopped by user")
             return
