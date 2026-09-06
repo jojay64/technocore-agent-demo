@@ -30,6 +30,9 @@ COMMERCE_MODE = os.getenv("TCLK_COMMERCE_MODE", "DISABLED").strip().upper()
 REQUIRED_COMMERCE_MODE = "PAPER_COMMERCE"
 MAX_CONTRACTS = 100
 MAX_OFFERS = 300
+MAX_ACCEPT_HISTORY = 100
+MAX_ACTIVE_OWNED_CONTRACTS = 1
+ACTIVE_OWNED_STATES = {"accept_staged", "accept_sent", "accepted", "locked", "executing", "delivered"}
 MAX_PAPER_AMOUNT = 1000000
 MIN_EXPIRY_MARGIN_MS = 60000
 MIN_DEADLINE_GAP_MS = 120000
@@ -102,8 +105,11 @@ def append_jsonl(path, value):
 
 def clean_state():
     return {
-        "version": 1,
+        "version": 2,
         "initialized": False,
+        "commerce_start_seq": None,
+        "owned_contracts": {},
+        "accept_history": [],
         "room_sequences": {OFFER_ROOM: 0},
         "candidate_offers": {},
         "contracts": {},
@@ -127,6 +133,12 @@ def load_state():
         state["candidate_offers"] = {}
     if not isinstance(state.get("contracts"), dict):
         state["contracts"] = {}
+    if not isinstance(state.get("owned_contracts"), dict):
+        state["owned_contracts"] = {}
+    if not isinstance(state.get("accept_history"), list):
+        state["accept_history"] = []
+    if state.get("commerce_start_seq") is not None and not isinstance(state["commerce_start_seq"], int):
+        state["commerce_start_seq"] = None
     state["room_sequences"].setdefault(OFFER_ROOM, 0)
     return state
 
@@ -134,6 +146,8 @@ def load_state():
 def save_state(state):
     state["candidate_offers"] = dict(list(state["candidate_offers"].items())[-MAX_OFFERS:])
     state["contracts"] = dict(list(state["contracts"].items())[-MAX_CONTRACTS:])
+    state["owned_contracts"] = dict(list(state["owned_contracts"].items())[-MAX_CONTRACTS:])
+    state["accept_history"] = state["accept_history"][-MAX_ACCEPT_HISTORY:]
     guard.atomic_json(STATE_FILE, state)
 
 
@@ -247,6 +261,50 @@ def decode_frame(line):
     if frame_type == "heartbeat" and "note" in frame and not isinstance(frame["note"], str):
         raise ValueError("heartbeat note is invalid")
     return frame
+
+
+def stage_owned_accept(record, offer, task, source, state, private_state):
+    cutover = state.get("commerce_start_seq")
+    if not isinstance(cutover, int) or record.get("seq", 0) <= cutover:
+        raise ValueError("offer predates the commerce cutover")
+    if len(active_owned_contracts(state)) >= MAX_ACTIVE_OWNED_CONTRACTS:
+        raise ValueError("an owned contract is already active")
+    accept, secret = build_owned_accept(offer)
+    contract = accept["contract"]
+    if contract in state["owned_contracts"] or contract in private_state["owned_contracts"]:
+        raise ValueError("owned contract is already staged")
+    public_contract = {
+        "contract": contract,
+        "offer_id": offer["id"],
+        "offer": offer,
+        "accept": accept,
+        "payer_did": offer["from"],
+        "payee_did": EXPECTED_DID,
+        "status": "accept_staged",
+        "room": deal_room(contract),
+        "task": task,
+        "task_sha256": hashlib.sha256(task.encode("utf-8")).hexdigest(),
+        "context_source": source,
+        "offer_seq": record["seq"],
+        "created_at": time.time(),
+    }
+    private_state["owned_contracts"][contract] = {
+        "offer_id": offer["id"], "secret": secret, "created_at": time.time()
+    }
+    save_private_state(private_state)
+    state["owned_contracts"][contract] = public_contract
+    state["accept_history"].append({"contract": contract, "staged_at": time.time()})
+    save_state(state)
+    return accept
+
+
+
+def active_owned_contracts(state):
+    return [
+        contract for contract in state.get("owned_contracts", {}).values()
+        if contract.get("status") in ACTIVE_OWNED_STATES
+    ]
+
 
 
 def build_owned_accept(offer, secret_bytes=None, nonce=None):
@@ -492,6 +550,7 @@ def initialize_head(state):
     state["room_sequences"][OFFER_ROOM] = max(
         (item.get("seq", 0) for item in messages if isinstance(item, dict)), default=0
     )
+    state["commerce_start_seq"] = state["room_sequences"][OFFER_ROOM]
     state["initialized"] = True
     save_state(state)
 

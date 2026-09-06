@@ -50,7 +50,7 @@ class TclkAgentTests(unittest.TestCase):
     def commerce_fixture(self):
         _, payer = identity()
         now = 1700000000000
-        record = {"sender": payer, "timestamp_ms": now}
+        record = {"sender": payer, "timestamp_ms": now, "seq": 82}
         frame = {
             "type": "offer", "from": payer, "role": "payer", "amount": "10",
             "asset": "PAPER", "lock": "hash", "rails": ["paper"],
@@ -114,6 +114,63 @@ class TclkAgentTests(unittest.TestCase):
         offer["asset"] = "REAL"
         with self.assertRaisesRegex(ValueError, "PAPER hash-lock only"):
             agent.build_owned_accept(offer)
+
+
+    def test_first_initialization_sets_commerce_cutover_at_current_head(self):
+        state = agent.clean_state()
+        messages = [{"seq": 77}, {"seq": 81}]
+        with patch.object(agent, "room_messages", return_value=messages), patch.object(
+            agent, "save_state"
+        ) as saved:
+            agent.initialize_head(state)
+        self.assertTrue(state["initialized"])
+        self.assertEqual(state["room_sequences"][agent.OFFER_ROOM], 81)
+        self.assertEqual(state["commerce_start_seq"], 81)
+        self.assertEqual(state["owned_contracts"], {})
+        saved.assert_called_once_with(state)
+
+
+    def test_staged_accept_keeps_secret_only_in_private_state(self):
+        record, offer = self.commerce_fixture()
+        state = agent.clean_state()
+        state["commerce_start_seq"] = 81
+        private_state = agent.clean_private_state()
+        secret = bytes.fromhex("cd" * 32)
+        with patch.object(agent.secrets, "token_bytes", return_value=secret), patch.object(
+            agent.secrets, "token_hex", return_value="ef" * 16
+        ), patch.object(
+            agent, "save_private_state"
+        ) as private_saved, patch.object(agent, "save_state") as public_saved:
+            accept = agent.stage_owned_accept(
+                record, offer, "Calculate 17 plus 25.", "inline", state, private_state
+            )
+        contract = accept["contract"]
+        self.assertEqual(state["owned_contracts"][contract]["status"], "accept_staged")
+        self.assertNotIn(secret.hex(), json.dumps(state))
+        self.assertEqual(private_state["owned_contracts"][contract]["secret"], "0x" + secret.hex())
+        private_saved.assert_called_once_with(private_state)
+        public_saved.assert_called_once_with(state)
+
+    def test_staging_rejects_offer_at_or_before_cutover(self):
+        record, offer = self.commerce_fixture()
+        state = agent.clean_state()
+        state["commerce_start_seq"] = record["seq"]
+        with self.assertRaisesRegex(ValueError, "predates the commerce cutover"):
+            agent.stage_owned_accept(
+                record, offer, "Calculate 17 plus 25.", "inline",
+                state, agent.clean_private_state()
+            )
+
+    def test_staging_rejects_second_active_owned_contract(self):
+        record, offer = self.commerce_fixture()
+        state = agent.clean_state()
+        state["commerce_start_seq"] = 81
+        state["owned_contracts"]["existing"] = {"status": "locked"}
+        with self.assertRaisesRegex(ValueError, "already active"):
+            agent.stage_owned_accept(
+                record, offer, "Calculate 17 plus 25.", "inline",
+                state, agent.clean_private_state()
+            )
 
 
     def test_commerce_requires_explicit_activation(self):
