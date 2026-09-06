@@ -36,7 +36,7 @@ MAX_ACCEPT_HISTORY = 100
 MAX_ACTIVE_OWNED_CONTRACTS = 1
 MAX_ACCEPTS_PER_24H = 3
 ACCEPT_WINDOW_SECONDS = 86400
-ACTIVE_OWNED_STATES = {"accept_staged", "accept_sending", "accept_uncertain", "accept_sent", "accepted", "locked", "executing", "delivered", "execution_failed", "execution_rejected", "ready_to_deliver", "delivery_sending", "delivery_uncertain"}
+ACTIVE_OWNED_STATES = {"accept_staged", "accept_sending", "accept_uncertain", "accept_sent", "accepted", "locked", "executing", "delivered", "execution_failed", "execution_rejected", "ready_to_deliver", "delivery_sending", "delivery_uncertain", "reveal_sending", "reveal_uncertain", "reveal_published", "claim_uncertain"}
 MAX_PAPER_AMOUNT = 1000000
 MIN_EXPIRY_MARGIN_MS = 60000
 MIN_DEADLINE_GAP_MS = 120000
@@ -535,6 +535,31 @@ def apply_contract_frame(contract, frame, timestamp_ms):
     return status, False, f"unsupported {kind} transition"
 
 
+def build_owned_reveal(owned, private_state, now_ms=None):
+    if owned.get("status") != "delivered" or not isinstance(owned.get("delivery_seq"), int):
+        raise ValueError("verified delivery must precede reveal")
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    if now_ms >= owned["offer"]["claimByMs"]:
+        raise ValueError("claim deadline passed before reveal")
+    private_contract = private_state.get("owned_contracts", {}).get(owned["contract"])
+    secret = private_contract.get("secret") if isinstance(private_contract, dict) else None
+    if not HEX32.fullmatch(str(secret)):
+        raise ValueError("private contract secret is missing or invalid")
+    digest = "0x" + hashlib.sha256(bytes.fromhex(secret[2:])).hexdigest()
+    if digest != owned["statement"]:
+        raise ValueError("private secret does not open the contract statement")
+    if owned.get("rail_ref") != owned["contract"]:
+        raise ValueError("owned PAPER rail reference is invalid")
+    return {
+        "type": "reveal",
+        "from": EXPECTED_DID,
+        "contract": owned["contract"],
+        "secret": secret,
+        "ref": owned["rail_ref"],
+    }
+
+
+
 def build_delivery_artifact(owned):
     if owned.get("status") != "ready_to_deliver":
         raise ValueError("owned contract is not ready to deliver")
@@ -609,6 +634,126 @@ def paper_note_location(contract):
     if not HEX32.fullmatch(str(contract)):
         raise ValueError("invalid PAPER contract id")
     return "tclk-paper-" + contract[2:4], contract[4:18]
+
+
+def publish_reveal_and_claim(contract_id_value, state, private_state, private_key, did):
+    owned = state.get("owned_contracts", {}).get(contract_id_value)
+    if not owned or owned.get("status") != "delivered":
+        raise ValueError("owned contract has no verified delivery")
+    lock_frame = {
+        "type": "lock", "from": owned["payer_did"],
+        "contract": owned["contract"], "rail": "paper",
+        "ref": owned.get("rail_ref"),
+    }
+    preclaim_evidence = verify_owned_paper_lock(owned, lock_frame)
+    reveal = build_owned_reveal(owned, private_state)
+    nonce = next_transport_nonce(private_state)
+    outbound = sign_outbound_frame(
+        private_key, did, owned["room"], reveal, nonce
+    )
+    owned["status"] = "reveal_sending"
+    owned["reveal"] = reveal
+    owned["reveal_outbound"] = outbound
+    owned["preclaim_evidence"] = preclaim_evidence
+    save_state(state)
+    try:
+        record = post_signed_content(outbound)
+    except Exception as error:
+        owned["status"] = "reveal_uncertain"
+        owned["last_error"] = str(error)[:300]
+        save_state(state)
+        append_jsonl(DECISION_LOG, {
+            "logged_at": time.time(), "result": "reveal_uncertain",
+            "contract": contract_id_value, "reason": str(error)[:300],
+        })
+        raise
+    owned["status"] = "reveal_published"
+    owned["reveal_seq"] = record["seq"]
+    owned["reveal_timestamp"] = record["ts"]
+    state["room_sequences"][owned["room"]] = max(
+        int(state["room_sequences"].get(owned["room"], 0)), record["seq"]
+    )
+    append_jsonl(TRANSCRIPT_LOG, transcript_entry(
+        record, reveal, "reveal_sending", "reveal_published", True,
+        "verified reveal published after delivery"
+    ))
+    save_state(state)
+    try:
+        claim_evidence = claim_owned_paper_note(owned, private_state)
+    except Exception as error:
+        owned["status"] = "claim_uncertain"
+        owned["last_error"] = str(error)[:300]
+        save_state(state)
+        append_jsonl(DECISION_LOG, {
+            "logged_at": time.time(), "result": "claim_uncertain",
+            "contract": contract_id_value, "reason": str(error)[:300],
+        })
+        raise
+    owned["status"] = "claimed"
+    owned["claim_evidence"] = claim_evidence
+    save_state(state)
+    return record
+
+
+
+def claim_owned_paper_note(owned, private_state, now_ms=None):
+    if owned.get("status") not in {"reveal_published", "claim_uncertain"}:
+        raise ValueError("verified reveal must precede PAPER claim")
+    if not isinstance(owned.get("reveal_seq"), int):
+        raise ValueError("PAPER claim has no verified reveal sequence")
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    if now_ms >= owned["offer"]["refundAfterMs"]:
+        raise ValueError("refund deadline passed before PAPER claim")
+    private_contract = private_state.get("owned_contracts", {}).get(owned["contract"])
+    secret = private_contract.get("secret") if isinstance(private_contract, dict) else None
+    if not HEX32.fullmatch(str(secret)):
+        raise ValueError("private contract secret is missing or invalid")
+    digest = "0x" + hashlib.sha256(bytes.fromhex(secret[2:])).hexdigest()
+    if digest != owned["statement"]:
+        raise ValueError("private secret does not open the PAPER statement")
+    namespace, key = paper_note_location(owned["contract"])
+    locked = (
+        f"tclkpaper1 locked hash {owned["statement"]} "
+        f"{owned["offer"]["refundAfterMs"]}"
+    )
+    claimed = locked.replace(" locked ", " claimed ", 1) + " " + secret
+    current = read_note_value(namespace, key)
+    if current != claimed:
+        if current != locked:
+            raise RuntimeError("PAPER note changed before claim")
+        if not set_note_cas(namespace, key, claimed, locked):
+            current = read_note_value(namespace, key)
+            if current != claimed:
+                raise RuntimeError("PAPER claim lost its compare-and-set race")
+    return {
+        "namespace": namespace, "key": key,
+        "value_sha256": hashlib.sha256(claimed.encode("utf-8")).hexdigest(),
+    }
+
+
+
+def set_note_cas(namespace, key, value, expected):
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", namespace):
+        raise ValueError("invalid PAPER note namespace")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", key):
+        raise ValueError("invalid PAPER note key")
+    query = urllib.parse.urlencode({"if": expected})
+    encoded_value = urllib.parse.quote(value, safe="")
+    url = f"{guard.BASE_URL}/kv/{namespace}/{key}/set/{encoded_value}?{query}"
+    request = urllib.request.Request(
+        url,
+        method="GET",
+        headers={"User-Agent": "technocore-tclk-paper-commerce/0.1"},
+    )
+    try:
+        with guard.OPENER.open(request, timeout=guard.HTTP_TIMEOUT_SECONDS) as response:
+            response.read(4097)
+    except urllib.error.HTTPError as error:
+        if error.code == 409:
+            return False
+        raise
+    return True
+
 
 
 def read_note_value(namespace, key):

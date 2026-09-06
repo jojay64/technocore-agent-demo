@@ -593,6 +593,175 @@ class TclkAgentTests(unittest.TestCase):
         transcript.assert_called_once()
 
 
+    def test_reveal_requires_prior_delivery_and_matching_private_secret(self):
+        _, did, state, private_state, contract = self.ready_delivery_fixture()
+        owned = state["owned_contracts"][contract]
+        with patch.object(agent, "EXPECTED_DID", did):
+            with self.assertRaisesRegex(ValueError, "delivery must precede"):
+                agent.build_owned_reveal(owned, private_state, now_ms=1700000001000)
+            owned["status"] = "delivered"
+            owned["delivery_seq"] = 7
+            reveal = agent.build_owned_reveal(
+                owned, private_state, now_ms=1700000001000
+            )
+        self.assertEqual(reveal["from"], did)
+        self.assertEqual(reveal["contract"], contract)
+        self.assertEqual(reveal["ref"], contract)
+        digest = "0x" + hashlib.sha256(bytes.fromhex(reveal["secret"][2:])).hexdigest()
+        self.assertEqual(digest, owned["statement"])
+
+    def test_reveal_refuses_expired_claim_deadline(self):
+        _, did, state, private_state, contract = self.ready_delivery_fixture()
+        owned = state["owned_contracts"][contract]
+        owned["status"] = "delivered"
+        owned["delivery_seq"] = 7
+        with patch.object(agent, "EXPECTED_DID", did):
+            with self.assertRaisesRegex(ValueError, "claim deadline passed"):
+                agent.build_owned_reveal(
+                    owned, private_state, now_ms=owned["offer"]["claimByMs"]
+                )
+
+
+    def test_paper_note_cas_handles_success_and_conflict(self):
+        locked = "tclkpaper1 locked hash 0x" + "ab" * 32 + " 1700000480000"
+        claimed = locked.replace(" locked ", " claimed ") + " 0x" + "cd" * 32
+        with patch.object(agent.guard.OPENER, "open") as opened:
+            opened.return_value.__enter__.return_value.read.return_value = b"ok"
+            self.assertTrue(agent.set_note_cas("tclk-paper-aa", "contractkey", claimed, locked))
+        request = opened.call_args.args[0]
+        self.assertEqual(request.method, "GET")
+        self.assertIn("if=", request.full_url)
+        conflict = agent.urllib.error.HTTPError(
+            "https://technocore.chat", 409, "conflict", None, None
+        )
+        with patch.object(agent.guard.OPENER, "open", side_effect=conflict):
+            self.assertFalse(
+                agent.set_note_cas("tclk-paper-aa", "contractkey", claimed, locked)
+            )
+
+
+    def test_paper_claim_is_after_reveal_and_idempotent(self):
+        _, _, state, private_state, contract = self.ready_delivery_fixture()
+        owned = state["owned_contracts"][contract]
+        owned["status"] = "reveal_published"
+        owned["reveal_seq"] = 8
+        secret = private_state["owned_contracts"][contract]["secret"]
+        locked = (
+            f"tclkpaper1 locked hash {owned["statement"]} "
+            f"{owned["offer"]["refundAfterMs"]}"
+        )
+        claimed = locked.replace(" locked ", " claimed ", 1) + " " + secret
+        with patch.object(agent, "read_note_value", return_value=locked), patch.object(
+            agent, "set_note_cas", return_value=True
+        ) as cas:
+            evidence = agent.claim_owned_paper_note(
+                owned, private_state, now_ms=1700000001000
+            )
+        self.assertIn("value_sha256", evidence)
+        cas.assert_called_once()
+        with patch.object(agent, "read_note_value", return_value=claimed), patch.object(
+            agent, "set_note_cas"
+        ) as repeated_cas:
+            repeated = agent.claim_owned_paper_note(
+                owned, private_state, now_ms=1700000001000
+            )
+        self.assertEqual(evidence, repeated)
+        repeated_cas.assert_not_called()
+
+
+    def test_reveal_is_published_before_paper_claim(self):
+        private, did, state, private_state, contract = self.ready_delivery_fixture()
+        owned = state["owned_contracts"][contract]
+        owned["status"] = "delivered"
+        owned["delivery_seq"] = 7
+        order = []
+        def verified(*args):
+            order.append("lock_verified")
+            return {"value_sha256": "lock-hash"}
+        def posted(outbound):
+            order.append("reveal_published")
+            return {
+                "room": outbound["room"], "seq": 8,
+                "ts": "2023-11-14T22:13:22Z", "timestamp_ms": 1700000002000,
+                "sender": outbound["sender_did"],
+                "nonce": outbound["transport_nonce"],
+                "signature": outbound["transport_signature"],
+                "line": outbound["content"],
+            }
+        def claimed(*args):
+            order.append("paper_claimed")
+            return {"value_sha256": "claim-hash"}
+        with patch.object(agent, "EXPECTED_DID", did), patch.object(
+            agent.time, "time", return_value=1700000000.0
+        ), patch.object(agent, "verify_owned_paper_lock", side_effect=verified), patch.object(
+            agent, "next_transport_nonce", return_value="12345"
+        ), patch.object(agent, "post_signed_content", side_effect=posted), patch.object(
+            agent, "claim_owned_paper_note", side_effect=claimed
+        ), patch.object(agent, "append_jsonl"), patch.object(agent, "save_state"):
+            record = agent.publish_reveal_and_claim(
+                contract, state, private_state, private, did
+            )
+        self.assertEqual(order, ["lock_verified", "reveal_published", "paper_claimed"])
+        self.assertEqual(record["seq"], 8)
+        self.assertEqual(owned["status"], "claimed")
+        self.assertEqual(owned["reveal_seq"], 8)
+
+
+    def test_uncertain_reveal_never_attempts_paper_claim(self):
+        private, did, state, private_state, contract = self.ready_delivery_fixture()
+        owned = state["owned_contracts"][contract]
+        owned["status"] = "delivered"
+        owned["delivery_seq"] = 7
+        with patch.object(agent, "EXPECTED_DID", did), patch.object(
+            agent.time, "time", return_value=1700000000.0
+        ), patch.object(
+            agent, "verify_owned_paper_lock", return_value={"value_sha256": "lock"}
+        ), patch.object(agent, "next_transport_nonce", return_value="12345"), patch.object(
+            agent, "post_signed_content", side_effect=TimeoutError("reveal timeout")
+        ), patch.object(agent, "claim_owned_paper_note") as claim, patch.object(
+            agent, "append_jsonl"
+        ), patch.object(agent, "save_state"):
+            with self.assertRaises(TimeoutError):
+                agent.publish_reveal_and_claim(
+                    contract, state, private_state, private, did
+                )
+        self.assertEqual(owned["status"], "reveal_uncertain")
+        self.assertNotIn("reveal_seq", owned)
+        claim.assert_not_called()
+
+
+    def test_claim_failure_preserves_confirmed_reveal(self):
+        private, did, state, private_state, contract = self.ready_delivery_fixture()
+        owned = state["owned_contracts"][contract]
+        owned["status"] = "delivered"
+        owned["delivery_seq"] = 7
+        def posted(outbound):
+            return {
+                "room": outbound["room"], "seq": 8,
+                "ts": "2023-11-14T22:13:22Z", "timestamp_ms": 1700000002000,
+                "sender": outbound["sender_did"],
+                "nonce": outbound["transport_nonce"],
+                "signature": outbound["transport_signature"],
+                "line": outbound["content"],
+            }
+        with patch.object(agent, "EXPECTED_DID", did), patch.object(
+            agent.time, "time", return_value=1700000000.0
+        ), patch.object(
+            agent, "verify_owned_paper_lock", return_value={"value_sha256": "lock"}
+        ), patch.object(agent, "next_transport_nonce", return_value="12345"), patch.object(
+            agent, "post_signed_content", side_effect=posted
+        ) as reveal_post, patch.object(
+            agent, "claim_owned_paper_note", side_effect=TimeoutError("claim timeout")
+        ), patch.object(agent, "append_jsonl"), patch.object(agent, "save_state"):
+            with self.assertRaises(TimeoutError):
+                agent.publish_reveal_and_claim(
+                    contract, state, private_state, private, did
+                )
+        self.assertEqual(owned["status"], "claim_uncertain")
+        self.assertEqual(owned["reveal_seq"], 8)
+        reveal_post.assert_called_once()
+
+
     def test_commerce_requires_explicit_activation(self):
         with patch.object(agent, "COMMERCE_MODE", "DISABLED"):
             with self.assertRaisesRegex(RuntimeError, "commerce is disabled"):
