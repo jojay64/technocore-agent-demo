@@ -29,9 +29,15 @@ COMMERCE_MODE = os.getenv("TCLK_COMMERCE_MODE", "DISABLED").strip().upper()
 REQUIRED_COMMERCE_MODE = "PAPER_COMMERCE"
 MAX_CONTRACTS = 100
 MAX_OFFERS = 300
+MAX_PAPER_AMOUNT = 1000000
+MIN_EXPIRY_MARGIN_MS = 60000
+MIN_DEADLINE_GAP_MS = 120000
+MAX_CONTRACT_HORIZON_MS = 86400000
+MAX_COMMERCE_TASK_CHARS = 1000
 ROOM_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")
 HEX32 = re.compile(r"^0x[0-9a-f]{64}$")
 FRAME_NONCE = re.compile(r"^[0-9a-f]{8,64}$")
+TOP_LEVEL_JOB_NOTE = re.compile(r"^/kv/tclk-job(?:-[a-z]{2})?/[A-Za-z0-9_-]{1,128}$")
 
 FRAME_FIELDS = {
     "accept": ({"type", "from", "ref", "statement", "contract", "paymentKey", "nonce"},
@@ -332,12 +338,40 @@ def apply_contract_frame(contract, frame, timestamp_ms):
     return status, False, f"unsupported {kind} transition"
 
 
+def commerce_offer_screen(record, frame, task, source):
+    eligible, reason = guard.deterministic_screen(record, frame, task)
+    if not eligible:
+        return False, reason
+    if frame.get("rails") != ["paper"]:
+        return False, "commerce requires exactly one paper rail"
+    if int(frame.get("amount", "0")) > MAX_PAPER_AMOUNT:
+        return False, "PAPER amount exceeds commerce cap"
+    recorded_ms = record["timestamp_ms"]
+    if frame["expiresMs"] - recorded_ms < MIN_EXPIRY_MARGIN_MS:
+        return False, "offer expires too soon"
+    if frame["claimByMs"] - frame["expiresMs"] < MIN_DEADLINE_GAP_MS:
+        return False, "claim deadline gap is too short"
+    if frame["refundAfterMs"] - frame["claimByMs"] < MIN_DEADLINE_GAP_MS:
+        return False, "refund deadline gap is too short"
+    if frame["refundAfterMs"] - recorded_ms > MAX_CONTRACT_HORIZON_MS:
+        return False, "contract horizon exceeds one day"
+    normalized = guard.normalize(task)
+    if len(normalized) < 20 or len(normalized) > MAX_COMMERCE_TASK_CHARS:
+        return False, "task length is outside commerce limits"
+    if normalized.endswith("...") or re.search(r"\bfull spec\s*:|/kv/", normalized, re.IGNORECASE):
+        return False, "task is truncated or contains a nested reference"
+    if source != "inline" and not TOP_LEVEL_JOB_NOTE.fullmatch(source):
+        return False, "job note is outside the allowed namespace"
+    return True, "eligible bounded PAPER commerce task"
+
+
+
 def evaluate_offer(record, frame, state):
     if frame["id"] in state["candidate_offers"]:
         return
     try:
         task, source = guard.resolve_context(frame.get("job", {}).get("context", ""))
-        eligible, reason = guard.deterministic_screen(record, frame, task)
+        eligible, reason = commerce_offer_screen(record, frame, task, source)
     except Exception as error:
         eligible, reason, task, source = False, str(error), "", ""
     decision = {

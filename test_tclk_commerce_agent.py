@@ -47,6 +47,54 @@ def signed_message(private, did, room, frame, seq=1, nonce="12345"):
 
 
 class TclkAgentTests(unittest.TestCase):
+    def commerce_fixture(self):
+        _, payer = identity()
+        now = 1700000000000
+        record = {"sender": payer, "timestamp_ms": now}
+        frame = {
+            "from": payer, "role": "payer", "amount": "10",
+            "asset": "PAPER", "lock": "hash", "rails": ["paper"],
+            "expiresMs": now + 120000,
+            "claimByMs": now + 300000,
+            "refundAfterMs": now + 480000,
+            "job": {"proto": "a2a", "id": "job-1", "context": "inline"},
+        }
+        return record, frame
+
+
+    def test_safe_inline_task_passes_commerce_screen(self):
+        record, frame = self.commerce_fixture()
+        allowed, _ = agent.commerce_offer_screen(
+            record, frame, "Calculate 17 plus 25 and answer with one integer.", "inline"
+        )
+        self.assertTrue(allowed)
+
+    def test_empty_rail_list_is_rejected(self):
+        record, frame = self.commerce_fixture()
+        frame["rails"] = []
+        allowed, _ = agent.commerce_offer_screen(
+            record, frame, "Calculate 17 plus 25 and answer with one integer.", "inline"
+        )
+        self.assertFalse(allowed)
+
+    def test_nested_job_reference_is_rejected(self):
+        record, frame = self.commerce_fixture()
+        allowed, reason = agent.commerce_offer_screen(
+            record, frame, "Read the full specification from /kv/other/job-2 and summarize it.", "inline"
+        )
+        self.assertFalse(allowed)
+        self.assertIn("nested reference", reason)
+
+    def test_short_expiry_margin_is_rejected(self):
+        record, frame = self.commerce_fixture()
+        frame["expiresMs"] = record["timestamp_ms"] + 1000
+        allowed, reason = agent.commerce_offer_screen(
+            record, frame, "Calculate 17 plus 25 and answer with one integer.", "inline"
+        )
+        self.assertFalse(allowed)
+        self.assertIn("expires too soon", reason)
+
+
     def test_commerce_requires_explicit_activation(self):
         with patch.object(agent, "COMMERCE_MODE", "DISABLED"):
             with self.assertRaisesRegex(RuntimeError, "commerce is disabled"):
