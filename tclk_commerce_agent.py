@@ -38,6 +38,8 @@ MAX_ACCEPTS_PER_24H = 3
 ACCEPT_WINDOW_SECONDS = 86400
 HEARTBEAT_INTERVAL_SECONDS = 300
 ACTIVE_OWNED_STATES = {"accept_staged", "accept_sending", "accept_uncertain", "accept_sent", "accepted", "locked", "executing", "delivered", "execution_failed", "execution_rejected", "ready_to_deliver", "delivery_sending", "delivery_uncertain", "reveal_sending", "reveal_uncertain", "reveal_published", "claim_uncertain"}
+UNCERTAIN_ACCEPT_STATES = {"accept_sending", "accept_uncertain", "accept_sent"}
+PRELOCK_EXPIRABLE_STATES = UNCERTAIN_ACCEPT_STATES | {"accept_staged", "accepted"}
 MAX_PAPER_AMOUNT = 1000000
 MIN_EXPIRY_MARGIN_MS = 60000
 MIN_DEADLINE_GAP_MS = 120000
@@ -1060,6 +1062,126 @@ def publish_staged_accept(contract_id_value, state, private_state, private_key, 
 
 
 
+def reconcile_owned_accept(record, frame, state, append_transcript=True):
+    """Fold an exact, verified echo of our own accept after an ambiguous POST."""
+    if frame.get("type") != "accept" or frame.get("from") != EXPECTED_DID:
+        return False
+    owned = state.get("owned_contracts", {}).get(frame.get("contract"))
+    if not owned or owned.get("status") not in (UNCERTAIN_ACCEPT_STATES | {"accepted"}):
+        return False
+    if frame != owned.get("accept"):
+        return False
+    outbound = owned.get("accept_outbound")
+    if not isinstance(outbound, dict):
+        return False
+    expected_content = "tclk1 " + guard.canonical_json(frame)
+    if (
+        record.get("room") != OFFER_ROOM
+        or record.get("sender") != EXPECTED_DID
+        or record.get("line") != expected_content
+        or outbound.get("room") != OFFER_ROOM
+        or outbound.get("sender_did") != EXPECTED_DID
+        or outbound.get("content") != expected_content
+        or record.get("nonce") != outbound.get("transport_nonce")
+        or record.get("signature") != outbound.get("transport_signature")
+    ):
+        return False
+    if owned["status"] == "accepted":
+        return True
+    before = owned["status"]
+    owned["status"] = "accepted"
+    owned["accept_seq"] = record["seq"]
+    owned["accept_timestamp"] = record["ts"]
+    owned.pop("last_error", None)
+    state["room_sequences"][OFFER_ROOM] = max(
+        int(state["room_sequences"].get(OFFER_ROOM, 0)), record["seq"]
+    )
+    state["room_sequences"].setdefault(owned["room"], 0)
+    state.get("contracts", {}).pop(owned["contract"], None)
+    if append_transcript:
+        append_jsonl(TRANSCRIPT_LOG, transcript_entry(
+            record, frame, before, "accepted", True,
+            "reconciled exact signed owned PAPER accept"
+        ))
+    append_jsonl(DECISION_LOG, {
+        "logged_at": time.time(), "result": "accept_reconciled",
+        "contract": owned["contract"], "seq": record["seq"],
+    })
+    save_state(state)
+    return True
+
+
+def recover_uncertain_accepts_from_transcript(state):
+    """Recover only from a locally retained record whose signature still verifies."""
+    targets = {
+        contract_id_value
+        for contract_id_value, owned in state.get("owned_contracts", {}).items()
+        if owned.get("status") in UNCERTAIN_ACCEPT_STATES
+    }
+    if not targets or not TRANSCRIPT_LOG.exists():
+        return 0
+    recovered = 0
+    with TRANSCRIPT_LOG.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not targets:
+                break
+            if len(line) > 2 * 1024 * 1024:
+                continue
+            try:
+                entry = json.loads(line)
+                if (
+                    entry.get("schema") != "technocore-tclk-signed-transcript-v1"
+                    or entry.get("room") != OFFER_ROOM
+                    or entry.get("frame_type") != "accept"
+                    or entry.get("contract") not in targets
+                    or entry.get("valid") is not True
+                ):
+                    continue
+                record = {
+                    "room": entry["room"], "seq": entry["seq"],
+                    "ts": entry["timestamp"], "timestamp_ms": entry["timestamp_ms"],
+                    "sender": entry["sender_did"], "nonce": entry["transport_nonce"],
+                    "signature": entry["transport_signature"], "line": entry["content"],
+                }
+                verify_transport(record)
+                frame = decode_frame(record["line"])
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if reconcile_owned_accept(record, frame, state, append_transcript=False):
+                targets.remove(entry["contract"])
+                recovered += 1
+    return recovered
+
+
+def expire_owned_contracts_without_valid_lock(state, private_state, now_ms=None):
+    """Locally retire pre-lock contracts after refundAfterMs; never send or reveal."""
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    expired = []
+    for contract_id_value, owned in state.get("owned_contracts", {}).items():
+        if owned.get("status") not in PRELOCK_EXPIRABLE_STATES:
+            continue
+        refund_after = owned.get("offer", {}).get("refundAfterMs")
+        if not isinstance(refund_after, int) or now_ms < refund_after:
+            continue
+        previous = owned["status"]
+        owned["status"] = "expired_without_valid_lock"
+        owned["expired_at_ms"] = now_ms
+        owned["expired_from"] = previous
+        owned["expiry_reason"] = "refund window opened without a valid PAPER lock"
+        private_state.get("owned_contracts", {}).pop(contract_id_value, None)
+        append_jsonl(DECISION_LOG, {
+            "logged_at": time.time(), "result": "contract_expired_safely",
+            "contract": contract_id_value, "previous_status": previous,
+            "secret_discarded": True,
+        })
+        expired.append(contract_id_value)
+    if expired:
+        save_private_state(private_state)
+        save_state(state)
+    return expired
+
+
+
 def process_offer_room(message, state, runtime):
     record = transport_record(OFFER_ROOM, message)
     verify_transport(record)
@@ -1068,6 +1190,8 @@ def process_offer_room(message, state, runtime):
         return
     if frame["type"] == "offer":
         evaluate_offer(record, frame, state, runtime)
+        return
+    if frame["type"] == "accept" and reconcile_owned_accept(record, frame, state):
         return
     if frame["type"] != "accept" or frame["ref"] not in state["candidate_offers"]:
         return
@@ -1170,6 +1294,10 @@ def maybe_publish_heartbeats(state, runtime, now=None):
 
 
 def resume_owned_work(state, runtime):
+    recover_uncertain_accepts_from_transcript(state)
+    expire_owned_contracts_without_valid_lock(
+        state, runtime["private_state"]
+    )
     for contract_id_value, owned in list(state.get("owned_contracts", {}).items()):
         if owned.get("status") == "accept_staged":
             publish_staged_accept(
