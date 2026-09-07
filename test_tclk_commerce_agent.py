@@ -341,6 +341,134 @@ class TclkAgentTests(unittest.TestCase):
         decision_log.assert_called_once()
 
 
+    def uncertain_accept_fixture(self):
+        private, did, state, private_state, contract = self.staged_contract_fixture()
+        owned = state["owned_contracts"][contract]
+        nonce = "12345"
+        with patch.object(agent, "EXPECTED_DID", did):
+            outbound = agent.sign_outbound_frame(
+                private, did, agent.OFFER_ROOM, owned["accept"], nonce
+            )
+        owned["status"] = "accept_uncertain"
+        owned["accept_outbound"] = outbound
+        message = signed_message(
+            private, did, agent.OFFER_ROOM, owned["accept"], seq=99, nonce=nonce
+        )
+        record = agent.transport_record(agent.OFFER_ROOM, message)
+        return private, did, state, private_state, contract, record
+
+
+    def test_exact_signed_echo_reconciles_uncertain_accept(self):
+        _, did, state, _, contract, record = self.uncertain_accept_fixture()
+        frame = agent.decode_frame(record["line"])
+        with patch.object(agent, "EXPECTED_DID", did), patch.object(
+            agent, "append_jsonl"
+        ) as logged, patch.object(agent, "save_state") as saved:
+            reconciled = agent.reconcile_owned_accept(record, frame, state)
+        owned = state["owned_contracts"][contract]
+        self.assertTrue(reconciled)
+        self.assertEqual(owned["status"], "accepted")
+        self.assertEqual(owned["accept_seq"], 99)
+        self.assertNotIn("last_error", owned)
+        self.assertIn(owned["room"], state["room_sequences"])
+        self.assertEqual(logged.call_count, 2)
+        saved.assert_called_once_with(state)
+
+
+    def test_different_signature_never_reconciles_uncertain_accept(self):
+        private, did, state, _, contract, record = self.uncertain_accept_fixture()
+        replacement = signed_message(
+            private, did, agent.OFFER_ROOM,
+            state["owned_contracts"][contract]["accept"], seq=100, nonce="12346"
+        )
+        different_record = agent.transport_record(agent.OFFER_ROOM, replacement)
+        frame = agent.decode_frame(different_record["line"])
+        with patch.object(agent, "EXPECTED_DID", did), patch.object(
+            agent, "append_jsonl"
+        ) as logged, patch.object(agent, "save_state") as saved:
+            reconciled = agent.reconcile_owned_accept(
+                different_record, frame, state
+            )
+        self.assertFalse(reconciled)
+        self.assertEqual(state["owned_contracts"][contract]["status"], "accept_uncertain")
+        logged.assert_not_called()
+        saved.assert_not_called()
+
+
+    def test_verified_echo_of_already_accepted_contract_is_idempotent(self):
+        _, did, state, _, contract, record = self.uncertain_accept_fixture()
+        state["owned_contracts"][contract]["status"] = "accepted"
+        frame = agent.decode_frame(record["line"])
+        with patch.object(agent, "EXPECTED_DID", did), patch.object(
+            agent, "append_jsonl"
+        ) as logged, patch.object(agent, "save_state") as saved:
+            reconciled = agent.reconcile_owned_accept(record, frame, state)
+        self.assertTrue(reconciled)
+        logged.assert_not_called()
+        saved.assert_not_called()
+
+
+    def test_verified_transcript_recovers_uncertain_accept(self):
+        _, did, state, _, contract, record = self.uncertain_accept_fixture()
+        frame = agent.decode_frame(record["line"])
+        entry = agent.transcript_entry(
+            record, frame, "proposed", "accepted", True
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            transcript = Path(directory) / "transcript.jsonl"
+            transcript.write_text(
+                json.dumps(entry, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+            with patch.object(agent, "EXPECTED_DID", did), patch.object(
+                agent, "TRANSCRIPT_LOG", transcript
+            ), patch.object(agent, "append_jsonl"), patch.object(agent, "save_state"):
+                recovered = agent.recover_uncertain_accepts_from_transcript(state)
+        self.assertEqual(recovered, 1)
+        self.assertEqual(state["owned_contracts"][contract]["status"], "accepted")
+
+
+    def test_expired_prelock_contract_discards_secret_without_network_action(self):
+        _, _, state, private_state, contract = self.staged_contract_fixture()
+        owned = state["owned_contracts"][contract]
+        owned["status"] = "accepted"
+        now_ms = owned["offer"]["refundAfterMs"] + 1
+        with patch.object(agent, "append_jsonl") as logged, patch.object(
+            agent, "save_private_state"
+        ) as private_saved, patch.object(agent, "save_state") as state_saved, patch.object(
+            agent, "post_signed_content"
+        ) as posted:
+            expired = agent.expire_owned_contracts_without_valid_lock(
+                state, private_state, now_ms=now_ms
+            )
+        self.assertEqual(expired, [contract])
+        self.assertEqual(owned["status"], "expired_without_valid_lock")
+        self.assertNotIn(contract, private_state["owned_contracts"])
+        self.assertNotIn(owned, agent.active_owned_contracts(state))
+        posted.assert_not_called()
+        logged.assert_called_once()
+        private_saved.assert_called_once_with(private_state)
+        state_saved.assert_called_once_with(state)
+
+
+    def test_prelock_contract_is_not_expired_before_refund_window(self):
+        _, _, state, private_state, contract = self.staged_contract_fixture()
+        owned = state["owned_contracts"][contract]
+        owned["status"] = "accepted"
+        with patch.object(agent, "append_jsonl") as logged, patch.object(
+            agent, "save_private_state"
+        ) as private_saved, patch.object(agent, "save_state") as state_saved:
+            expired = agent.expire_owned_contracts_without_valid_lock(
+                state, private_state,
+                now_ms=owned["offer"]["refundAfterMs"] - 1,
+            )
+        self.assertEqual(expired, [])
+        self.assertIn(contract, private_state["owned_contracts"])
+        logged.assert_not_called()
+        private_saved.assert_not_called()
+        state_saved.assert_not_called()
+
+
     def test_delivery_is_normalized_and_bounded(self):
         self.assertEqual(agent.normalize_delivery("  answer   42  "), "answer 42")
         with self.assertRaisesRegex(ValueError, "character limit"):
