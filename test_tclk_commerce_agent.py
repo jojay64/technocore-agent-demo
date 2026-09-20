@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import os
 import tempfile
 import time
 import unittest
@@ -1044,8 +1045,14 @@ class TclkAgentTests(unittest.TestCase):
             value = {"version": 1, "owned_contracts": {"test": {"secret": "hidden"}}}
             with patch.object(agent, "PRIVATE_STATE_FILE", path):
                 agent.save_private_state(value)
-                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-                self.assertEqual(agent.load_private_state(), value)
+                self.assertTrue(path.is_file())
+                self.assertEqual(
+                    json.loads(path.read_text(encoding="utf-8")),
+                    value,
+                )
+                if os.name == "posix":
+                    self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                    self.assertEqual(agent.load_private_state(), value)
 
     def test_private_state_rejects_permissive_file(self):
         with tempfile.TemporaryDirectory() as directory:
