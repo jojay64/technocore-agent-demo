@@ -30,6 +30,7 @@ critic_identity.json
 judge_identity.json
 flop_agent_identity.json
 *_identity.json
+*_identity_backup.json
 *.key
 *.pem
 
