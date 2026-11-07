@@ -71,6 +71,10 @@ Keep all three services independent.
 
   `.venv/bin/python -m unittest -v test_technocore_pulse.py test_tclk_offer_watcher.py test_tclk_agent.py test_tclk_commerce_agent.py`
 
+- FLOP devnet probe (Node.js 24+, offline):
+
+  `node --test flop_probe/probe.test.ts`
+
 - On POSIX/Linux, private commerce state permissions must remain exactly `0600`.
 
 - Windows tests may account for the absence of POSIX permission semantics without weakening Linux assertions.

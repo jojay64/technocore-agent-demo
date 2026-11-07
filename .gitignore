@@ -42,3 +42,6 @@ tclk_offer_evaluations.jsonl
 # Local caches / temporary state
 .cache/
 *.tmp
+
+# Local Claude Code settings
+.claude/settings.local.json
