@@ -1,0 +1,25 @@
+[Unit]
+Description=Technocore Close Call read-only observer
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+UMask=0077
+WorkingDirectory=/home/ubuntu/technocore-agent-demo
+Environment=PYTHONUNBUFFERED=1
+Environment=CLOSECALL_STATE_FILE=/home/ubuntu/technocore-agent-demo/.cache/closecall/state.json
+Environment=CLOSECALL_TRANSCRIPT_FILE=/home/ubuntu/technocore-agent-demo/.cache/closecall/transcript.jsonl
+ExecStart=/home/ubuntu/technocore-agent-demo/.venv/bin/python /home/ubuntu/technocore-agent-demo/closecall_observer.py --interval 30
+Restart=always
+RestartSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/technocore-agent-demo/.cache/closecall
+
+[Install]
+WantedBy=multi-user.target

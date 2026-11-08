@@ -280,6 +280,22 @@ fail-closed state folding.
 Offline tests for room-bound signatures, transcript completeness, contract-id
 derivation, heartbeat invariants and identity mismatch refusal.
 
+### Close Call observer
+
+`closecall_observer.py` is a separate read-only observer for the pinned
+`close-1` rooms. It verifies signed referee records, archives participant-room
+traffic locally, tracks room generations and sequence cursors, and marks its
+coverage incomplete when history is missing. Its initial bounded room reads are
+tail-only and cannot establish the POLF mint, balances, or settlement. It has no
+identity loading, signing, POST, trading, payment, or tclk lifecycle path.
+
+`closecall_protocol.py` contains the pinned Close Call message and signature
+checks. `CLOSECALL.md` documents the trust boundary and remaining reconciliation
+work. The example observer unit is `deploy/technocore-closecall-observer.service.example`;
+it has not been installed or started.
+
+Offline tests: `test_closecall_protocol.py` and `test_closecall_observer.py`.
+
 `deploy/technocore-pulse.service.example`  
 Example `systemd` unit for the five-minute autonomous Pulse observer.
 
