@@ -12,7 +12,7 @@ WorkingDirectory=/home/ubuntu/technocore-agent-demo
 Environment=PYTHONUNBUFFERED=1
 Environment=CLOSECALL_STATE_FILE=/home/ubuntu/technocore-agent-demo/.cache/closecall/state.json
 Environment=CLOSECALL_TRANSCRIPT_FILE=/home/ubuntu/technocore-agent-demo/.cache/closecall/transcript.jsonl
-ExecStart=/home/ubuntu/technocore-agent-demo/.venv/bin/python /home/ubuntu/technocore-agent-demo/closecall_observer.py --interval 30
+ExecStart=/home/ubuntu/technocore-agent-demo/.venv/bin/python /home/ubuntu/technocore-agent-demo/closecall/closecall_observer.py --interval 30
 Restart=always
 RestartSec=15
 NoNewPrivileges=true

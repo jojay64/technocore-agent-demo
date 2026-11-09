@@ -14,7 +14,7 @@ Environment=TCLK_IDENTITY_FILE=/home/ubuntu/technocore-agent-demo/research_ident
 Environment=TCLK_AGENT_STATE_FILE=/home/ubuntu/technocore-agent-demo/.cache/tclk_agent_state.json
 Environment=TCLK_DECISION_LOG=/home/ubuntu/technocore-agent-demo/.cache/tclk_agent_decisions.jsonl
 Environment=TCLK_TRANSCRIPT_LOG=/home/ubuntu/technocore-agent-demo/.cache/tclk_signed_transcripts.jsonl
-ExecStart=/home/ubuntu/technocore-agent-demo/.venv/bin/python /home/ubuntu/technocore-agent-demo/tclk_agent.py
+ExecStart=/home/ubuntu/technocore-agent-demo/.venv/bin/python /home/ubuntu/technocore-agent-demo/tclk/tclk_agent.py
 Restart=always
 RestartSec=15
 NoNewPrivileges=true

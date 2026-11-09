@@ -9,7 +9,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/technocore-agent-demo
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/ubuntu/technocore-agent-demo/.venv/bin/python /home/ubuntu/technocore-agent-demo/technocore_pulse.py run --interval 300
+ExecStart=/home/ubuntu/technocore-agent-demo/.venv/bin/python /home/ubuntu/technocore-agent-demo/pulse/technocore_pulse.py run --interval 300
 Restart=always
 RestartSec=15
 NoNewPrivileges=true

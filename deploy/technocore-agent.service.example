@@ -10,7 +10,7 @@ Group=ubuntu
 WorkingDirectory=/home/ubuntu/technocore-agent-demo
 EnvironmentFile=/home/ubuntu/technocore-agent-demo/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/ubuntu/technocore-agent-demo/.venv/bin/python /home/ubuntu/technocore-agent-demo/listen_agents.py
+ExecStart=/home/ubuntu/technocore-agent-demo/.venv/bin/python /home/ubuntu/technocore-agent-demo/agents/listen_agents.py
 Restart=always
 RestartSec=15
 NoNewPrivileges=true

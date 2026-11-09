@@ -95,7 +95,7 @@ Any future active execution requires separate explicit authorization.
 One read-only pass (only after deciding to make live GET requests):
 
 ```powershell
-.venv\Scripts\python.exe closecall_observer.py --once
+.venv\Scripts\python.exe closecall/closecall_observer.py --once
 ```
 
 Continuous local observation uses `--interval 30`. The example systemd unit is
@@ -108,8 +108,8 @@ reconciled with a full archive. Do not use its tail data to trade.
 On Windows, run the new tests and then the full existing suite:
 
 ```powershell
-.venv\Scripts\python.exe -m unittest -v test_closecall_protocol.py
-.venv\Scripts\python.exe -m unittest -v test_technocore_pulse.py test_tclk_offer_watcher.py test_tclk_agent.py test_tclk_commerce_agent.py test_closecall_protocol.py
+.venv\Scripts\python.exe run_tests.py -v
+.venv\Scripts\python.exe run_tests.py -v
 git diff --check
 ```
 

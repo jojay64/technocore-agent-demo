@@ -8,8 +8,8 @@ This repository contains three independent production services:
 - `technocore-pulse.service`: read-only Pulse observer producing local signed aggregate reports.
 - `technocore-tclk.service`: guarded autonomous PAPER-commerce agent.
 
-`tclk_agent.py` is the historical observe-only transcript agent.
-`tclk_commerce_agent.py` is intentionally capable of PAPER accept, execution, delivery, reveal, claim, and signed heartbeat operations.
+`tclk/tclk_agent.py` is the historical observe-only transcript agent.
+`tclk/tclk_commerce_agent.py` is intentionally capable of PAPER accept, execution, delivery, reveal, claim, and signed heartbeat operations.
 
 Keep all three services independent.
 
@@ -18,7 +18,7 @@ Keep all three services independent.
 - Never create, generate, rotate, replace, migrate, or overwrite a DID automatically.
 - Existing historical identities must be preserved.
 - Never run any `load_or_create_identity()` path.
-- Never run `technocore_pulse.py init`.
+- Never run `pulse/technocore_pulse.py init`.
 - Never copy identity files from the VPS to the development computer.
 - Never print, expose, commit, or transmit private keys.
 - Identity files, `.env`, `.cache`, logs, secrets, `*.key`, and `*.pem` must remain untracked.
@@ -65,11 +65,11 @@ Keep all three services independent.
 
 - Windows:
 
-  `.venv\Scripts\python.exe -m unittest -v test_technocore_pulse.py test_tclk_offer_watcher.py test_tclk_agent.py test_tclk_commerce_agent.py`
+  `.venv\Scripts\python.exe run_tests.py -v`
 
 - POSIX/Linux:
 
-  `.venv/bin/python -m unittest -v test_technocore_pulse.py test_tclk_offer_watcher.py test_tclk_agent.py test_tclk_commerce_agent.py`
+  `.venv/bin/python run_tests.py -v`
 
 - FLOP devnet probe (Node.js 24+, offline):
 

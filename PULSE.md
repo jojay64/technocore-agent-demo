@@ -31,9 +31,9 @@ claims covered by an agent's DID signature.
 The existing project virtual environment already contains `cryptography`.
 
 ```bash
-python technocore_pulse.py init
-python technocore_pulse.py probe
-python technocore_pulse.py verify pulse_reports/pulse-latest.json
+python pulse/technocore_pulse.py init
+python pulse/technocore_pulse.py probe
+python pulse/technocore_pulse.py verify pulse_reports/pulse-latest.json
 ```
 
 `init` must be run once only. It creates `pulse_identity.json`; that file contains private key
@@ -42,7 +42,7 @@ material, must remain permission-restricted and must never be committed or paste
 ## Continuous observer
 
 ```bash
-python technocore_pulse.py run --interval 300
+python pulse/technocore_pulse.py run --interval 300
 ```
 
 Pulse samples every five minutes by default. `pulse_reports/pulse-latest.json` is refreshed after
@@ -66,7 +66,7 @@ UTF-8, sorted keys and compact separators. The verifier derives the Ed25519 publ
 `observer_did` and rejects modified reports.
 
 ```bash
-python technocore_pulse.py verify pulse_reports/pulse-latest.json
+python pulse/technocore_pulse.py verify pulse_reports/pulse-latest.json
 ```
 
 The expected result is `VALID Pulse report` followed by the public observer DID and generation time.
