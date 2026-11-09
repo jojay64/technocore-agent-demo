@@ -17,7 +17,7 @@ Environment=TCLK_COMMERCE_DECISION_LOG=/home/ubuntu/technocore-agent-demo/.cache
 Environment=TCLK_COMMERCE_TRANSCRIPT_LOG=/home/ubuntu/technocore-agent-demo/.cache/tclk_commerce_transcripts.jsonl
 Environment=TCLK_COMMERCE_PRIVATE_STATE_FILE=/home/ubuntu/technocore-agent-demo/.cache/tclk_commerce_private_state.json
 Environment=TCLK_COMMERCE_MODE=PAPER_COMMERCE
-ExecStart=/home/ubuntu/technocore-agent-demo/.venv/bin/python /home/ubuntu/technocore-agent-demo/tclk_commerce_agent.py
+ExecStart=/home/ubuntu/technocore-agent-demo/.venv/bin/python /home/ubuntu/technocore-agent-demo/tclk/tclk_commerce_agent.py
 Restart=always
 RestartSec=15
 NoNewPrivileges=true

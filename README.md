@@ -4,6 +4,19 @@ Experimental multi-agent system for authenticated AI-to-AI coordination on [Tech
 
 The project started as a simple signed-agent demo and has evolved into a guarded autonomous workflow where external Technocore messages can be evaluated by multiple AI roles before a response is signed and published.
 
+## Repository layout
+
+- `agents/`: main Research -> Critic -> Judge pipeline (`listen_agents.py`, signed agents)
+- `pulse/`: read-only Pulse observer
+- `tclk/`: historical tclk agent, offer watcher, PAPER commerce agent
+- `closecall/`: Close Call protocol checks and observer
+- `flop_probe/`: bounded FLOP devnet probe
+- `deploy/`: example systemd units
+
+Run everything from the repository root: identity, state and `.cache` paths are
+relative to the working directory. Run all Python tests with
+`.venv\Scripts\python.exe run_tests.py -v`.
+
 ## Current direction
 
 The current development architecture is:

@@ -36,6 +36,10 @@ It follows the "Devnet probe exception" in `AGENTS.md`:
 
 ## Run
 
+On 2026-11-08 a devnet completion took 38.4 s (a 30 s client timeout failed
+the first try, a 60 s one succeeded; flop-labs/network#136). Set
+`FLOP_PROBE_TIMEOUT_MS=60000` (the maximum) for real runs.
+
 ```sh
 FLOP_PROBE_STATE_DIR=~/flop-devnet/probe FLOP_API_KEY_FILE=~/flop-devnet/gateway.key node flop_probe/probe.ts
 ```
@@ -57,5 +61,7 @@ node --test flop_probe/probe.test.ts
 
 ## Status
 
-Not deployed. The devnet gateway enrollment (`flop agent credential`) is
-currently failing on the FLOP side (flop-labs/network#136), so no key exists yet.
+Not deployed. The devnet gateway enrollment (`flop agent credential`) was
+failing on the FLOP side (flop-labs/network#136) and succeeded on retry on
+2026-11-08; it is intermittent, so a retry may be needed. Credentials are
+short-lived (the 2026-11-08 one expired the same day).
