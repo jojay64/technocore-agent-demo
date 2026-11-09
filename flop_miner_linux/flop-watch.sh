@@ -43,11 +43,15 @@ answered=0; disc=0; calib="n/a"
 if [ "$worker" = up ]; then
   logs=$(docker logs --since "$LOGWIN" flop-miner-worker-1 2>&1 || true)
   answered=$(grep -c 'answered task' <<<"$logs" || true)
-  disc=$(grep -cE 'disconnected from wss|WebSocket is not connected' <<<"$logs" || true)
+  # One RPC drop logs several lines in the same second: count only the connection-level line.
+  disc=$(grep -c 'API-WS: disconnected from wss' <<<"$logs" || true)
   calib=$(grep '\[calibration\]' <<<"$logs" | tail -n 1 | sed 's/^.*\[calibration\] *//' | cut -c1-80 || true)
   [ -n "$calib" ] || calib="none in last $LOGWIN"
-  [ "${disc:-0}" -le "$WARN_DISCONNECTS" ] || warn+=("$disc RPC disconnects in the last $LOGWIN")
-  grep -q 'failed' <<<"$calib" && warn+=("last calibration line mentions a failure: $calib")
+  [ "${disc:-0}" -le "$WARN_DISCONNECTS" ] || warn+=("$disc RPC drops in the last $LOGWIN (the worker reconnects by itself; frequent drops point to the RPC or the network)")
+  # A calibration check that failed only because the RPC dropped is transient: not worth a warning.
+  if grep -q 'failed' <<<"$calib" && ! grep -q 'disconnected from wss' <<<"$calib"; then
+    warn+=("last calibration line mentions a failure: $calib")
+  fi
   [ "${answered:-0}" -gt 0 ] || warn+=("no test job answered in the last $LOGWIN (normal between calibration bursts)")
 fi
 
