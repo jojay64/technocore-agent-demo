@@ -13,6 +13,10 @@ This repository contains three independent production services:
 
 Keep all three services independent.
 
+The FLOP devnet GPU miner in `flop_miner_linux/` is a separate topic from these three services (it runs on a
+rented VM, never holds a Technocore identity, and is devnet only). Read `flop_miner_linux/NOTES.md` before any
+miner work: it records the first run, the mistakes to avoid and the procedure.
+
 ## Identity safety
 
 - Never create, generate, rotate, replace, migrate, or overwrite a DID automatically.

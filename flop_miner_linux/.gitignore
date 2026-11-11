@@ -1,3 +1,7 @@
 # Official Flop helper files are downloaded by the user, not redistributed here (see README.md).
 decode-policy.mjs
 retire.mjs
+# Encrypted miner key backups are secrets: never commit them.
+*.enc
+signer
+address

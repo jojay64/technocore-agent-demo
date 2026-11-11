@@ -46,14 +46,37 @@ chmod +x flop-miner-linux.sh
 WORKER_NAME=your-name ./flop-miner-linux.sh setup    # images, key, sponsor, model, tunnel
 ./flop-miner-linux.sh up
 ./flop-miner-linux.sh status
+./flop-miner-linux.sh backup-key                     # encrypt the miner key, copy the file to your PC
 ./flop-miner-linux.sh down && ./flop-miner-linux.sh retire   # then DELETE the instance
 ```
 
 Stopping Compose does not stop VM billing: delete the instance in the provider console. Unanswered test
 jobs cut the sponsored stake, so run `down` before the VM is stopped or its credit runs out.
 
+The miner key lives only on the VM. The miner can earn devnet FLOP from compute channels, so `backup-key`
+encrypts the key with a passphrase you type; copy the `.enc` file to your PC before deleting the instance.
+`retire` refuses to run without that backup (`SKIP_KEY_BACKUP=1` gives the key up on purpose).
+
+## Monitoring
+
+`flop-watch.sh` is a read-only health check (containers, tunnel, calibration, RPC drops, `[session]` channel
+lines, GPU, optional rent reminder). Exit code 0, 1 or 2 for OK, WARN, CRIT.
+
+```sh
+CREDIT_USD=25 RATE_USD_H=0.72 ./flop-watch.sh
+```
+
+Calibration jobs ("answered task") only come in one burst after start. Compute-channel activity shows up
+under `[session]` in the worker log and as `computeChannel.*` transactions on the miner's explorer page.
+
+## More
+
+See [NOTES.md](NOTES.md) for the results of the first run, the mistakes to avoid, network facts and the
+full procedure.
+
 ## Status
 
-Tested once on a rented RTX 4090 VM (calibration accepted on the FLOP devnet, 9 Nov 2026). The script has no
-automated tests (it needs Docker, a GPU and the live devnet); only its sponsor retry logic was exercised
-offline with mocked answers.
+Tested once on a rented RTX 4090 VM (9 to 11 Nov 2026): calibration accepted on the FLOP devnet, compute
+channels served, then retired cleanly. The script has no automated tests (it needs Docker, a GPU and the live
+devnet); only its sponsor retry logic, the `retire` backup guard and the `flop-watch.sh` counting were
+exercised offline with mocked answers.

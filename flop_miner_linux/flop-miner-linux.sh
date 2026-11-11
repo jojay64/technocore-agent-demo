@@ -22,6 +22,7 @@
 #   ./flop-miner-linux.sh logs      follow the worker log
 #   ./flop-miner-linux.sh sponsor   ask the sponsor again (or top up stake)
 #   ./flop-miner-linux.sh down      stop worker, backend and tunnel
+#   ./flop-miner-linux.sh backup-key  encrypt the miner key to a file you copy to your PC (do this BEFORE retire)
 #   ./flop-miner-linux.sh retire    stop the worker and deregister the miner on chain (do this before deleting the VM)
 #
 # Needs next to this script, unmodified (sha256 pinned below, from Flop's official miner pack
@@ -34,7 +35,8 @@
 # before the VM is stopped or its credit runs out, then `retire` and DESTROY the instance to stop paying.
 set -euo pipefail
 
-D=/opt/flop-miner
+D="${FLOP_MINER_DIR:-/opt/flop-miner}"
+BACKUP_FILE="${BACKUP_FILE:-/root/flop-miner-key-backup.enc}"
 RELEASES_URL=https://flop.network/releases.json
 SPONSOR_URL=https://faucet.flop.network
 RPC=wss://rpc.devnet.flop.network
@@ -484,6 +486,10 @@ cmd_sponsor() { if is_registered; then echo "already registered; asking for a st
 # Deregister the miner on chain (official retire.mjs): sponsored stake unbonds over 7 days and returns to the
 # sponsor. An open session or dispute refuses it until it settles. Stop the worker first.
 cmd_retire() {
+  # The miner can earn devnet FLOP from compute channels (the 9 Nov 2026 test miner ended with a balance on its
+  # address). The key lives only on this VM and is lost when the instance is deleted, so keep an encrypted copy.
+  [ -f "$BACKUP_FILE" ] || [ "${SKIP_KEY_BACKUP:-}" = 1 ] || \
+    die "no key backup at $BACKUP_FILE. Run ./flop-miner-linux.sh backup-key and copy the file to your PC first (or SKIP_KEY_BACKUP=1 ./flop-miner-linux.sh retire to give the key up)."
   vendored retire.mjs "$SHA_RETIRE"
   step "stopping the worker, then deregistering $(address)"
   compose stop worker || true
@@ -495,17 +501,36 @@ cmd_retire() {
   [ "$rc" -eq 0 ] || die "not retired (see above). Do not delete the VM until it is, or the stake stays bonded."
   echo "retired. You can now delete the rented instance (stopping it is not enough: billing continues)."
 }
+# Encrypt the miner key (the `signer` file) and the public address with a passphrase you type (asked twice).
+# The key is never printed. Copy the result to your PC (scp), then decrypt there with:
+#   openssl enc -d -aes-256-cbc -pbkdf2 -in flop-miner-key-backup.enc | tar x
+cmd_backup_key() {
+  [ "$(id -u)" -eq 0 ] || die "run as root (the key file is root-only)"
+  [ -f "$D/signer" ] || die "no key at $D/signer"
+  command -v openssl >/dev/null || die "openssl not found"
+  [ -t 0 ] || die "needs a terminal to ask for the passphrase"
+  step "encrypting the miner key for $(address)"
+  echo "Choose a passphrase and keep it somewhere safe; without it the backup is useless."
+  ( umask 077; tar -C "$D" -cf - signer address | openssl enc -aes-256-cbc -pbkdf2 -salt -out "$BACKUP_FILE" )
+  [ -s "$BACKUP_FILE" ] || die "backup is empty; try again"
+  echo "backup written: $BACKUP_FILE ($(stat -c %s "$BACKUP_FILE") bytes)"
+  echo "Copy it to your PC now. From PowerShell on the PC (adapt port and IP):"
+  echo "  scp -i \"\$env:USERPROFILE\\.ssh\\vast_flop\" -P <port> root@<ip>:$BACKUP_FILE ."
+  echo "Never commit this file or share it."
+}
 cmd_logs()    { compose logs -f --tail 50 worker; }
 cmd_down() {
   compose stop worker backend || true
   sudo systemctl stop flop-tunnel || true
   echo "stopped. Start again with: ./flop-miner-linux.sh up   (or destroy the rented instance to stop paying)"
+  echo "Before deleting the instance: ./flop-miner-linux.sh backup-key (copy the file to your PC), then ./flop-miner-linux.sh retire."
 }
 
-usage() { sed -n '2,36p' "$0"; }
+usage() { sed -n '2,37p' "$0"; }
 case "${1:-}" in
   prereqs) cmd_prereqs; exit ;;
   version) echo "flop-miner-linux.sh $VERSION"; exit ;;
+  backup-key) cmd_backup_key; exit ;;
   setup|up|status|logs|sponsor|down|retire) ;;
   *)       usage; exit 1 ;;
 esac
