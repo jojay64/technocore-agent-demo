@@ -32,13 +32,12 @@ It follows the "Devnet probe exception" in `AGENTS.md`:
 | `FLOP_PROBE_MODEL` | no | `qwen/qwen2.5-0.5b-instruct` |
 | `FLOP_PROBE_MAX_REQUESTS_PER_DAY` | no | `24` (max 48) |
 | `FLOP_PROBE_MAX_TOKENS` | no | `64` (max 128) |
-| `FLOP_PROBE_TIMEOUT_MS` | no | `30000` (max 60000) |
+| `FLOP_PROBE_TIMEOUT_MS` | no | `120000` (max 180000) |
 
 ## Run
 
-On 2026-11-08 a devnet completion took 38.4 s (a 30 s client timeout failed
-the first try, a 60 s one succeeded; flop-labs/network#136). Set
-`FLOP_PROBE_TIMEOUT_MS=60000` (the maximum) for real runs.
+Devnet completions are slow: 38.4 s on 2026-11-08 (flop-labs/network#136) and
+89.3 s on 2026-11-11, which is why the default timeout is 120 s.
 
 ```sh
 FLOP_PROBE_STATE_DIR=~/flop-devnet/probe FLOP_API_KEY_FILE=~/flop-devnet/gateway.key node flop_probe/probe.ts
@@ -49,7 +48,19 @@ sent), `3` daily budget spent (nothing sent).
 
 The state directory holds `budget.json` (today's attempt count) and
 `probe_journal.jsonl` (one record per attempt: time, latency, token counts,
-response id and a reply excerpt).
+response id, a reply excerpt and the settlement receipt).
+
+## Settlement receipt
+
+Each request carries a fresh UUID in an `Idempotency-Key` header, journaled as
+`request_id`, failures included (a failed request can still hold a
+reservation). On success the journal also keeps `cost_flop`, `channel_id`,
+`settlement_status` and `miner` from the reply; malformed values are dropped.
+
+The reply is usually `pending`; settlement took 259 s on 2026-11-11. To check
+it later, read `GET https://api.flop.network/v1/keys/me/receipts` with the same
+key and find the receipt whose `request_id` matches; it reads `settled` with a
+`settled_spend` once done.
 
 ## Tests
 
@@ -65,3 +76,9 @@ Not deployed. The devnet gateway enrollment (`flop agent credential`) was
 failing on the FLOP side (flop-labs/network#136) and succeeded on retry on
 2026-11-08; it is intermittent, so a retry may be needed. Credentials are
 short-lived (the 2026-11-08 one expired the same day).
+
+A gateway key can also be enrolled without the CLI, from a funded sr25519
+wallet ("Gateway key enrollment" in https://flop.network/llms.txt; 20,000 FLOP
+quota for 24 h). On 2026-11-11 that worked first time; of four requests, one
+returned 503, two 429 `overloaded` ("gateway channel pool is full") and one
+succeeded and settled on chain.

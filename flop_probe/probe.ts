@@ -6,6 +6,7 @@
 // The probe never retries, never reads remote content as instructions, and
 // counts every attempt against a fixed daily budget before sending anything.
 
+import { randomUUID } from "node:crypto";
 import { appendFile, chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -29,6 +30,7 @@ export interface ProbeDeps {
   fetch: typeof fetch;
   now: () => Date;
   monotonicMs: () => number;
+  randomUUID: () => string;
   platform: NodeJS.Platform;
   log: (line: string) => void;
 }
@@ -69,6 +71,7 @@ async function readApiKey(path: string, platform: NodeJS.Platform): Promise<stri
 async function sendRequest(
   config: ProbeConfig,
   apiKey: string,
+  requestId: string,
   deps: ProbeDeps,
 ): Promise<ParsedReply | ParsedFailure> {
   const controller = new AbortController();
@@ -76,7 +79,11 @@ async function sendRequest(
   try {
     const response = await deps.fetch(`${config.gatewayUrl}/v1/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+        "idempotency-key": requestId,
+      },
       body: buildRequestBody(config),
       redirect: "error",
       signal: controller.signal,
@@ -115,18 +122,20 @@ export async function runProbe(deps: ProbeDeps): Promise<number> {
   // hand out the same attempt twice.
   await writeAtomic(statePath, JSON.stringify(reserved) + "\n");
 
+  const requestId = deps.randomUUID();
   const t0 = deps.monotonicMs();
-  const result = await sendRequest(config, apiKey, deps);
+  const result = await sendRequest(config, apiKey, requestId, deps);
   const latencyMs = deps.monotonicMs() - t0;
 
-  const record = journalRecord(config, reserved.attempts, startedAt, latencyMs, result);
+  const record = journalRecord(config, reserved.attempts, requestId, startedAt, latencyMs, result);
   const journalPath = join(config.stateDir, JOURNAL_FILE);
   await appendFile(journalPath, JSON.stringify(record) + "\n", { encoding: "utf8", mode: 0o600 });
   if (deps.platform !== "win32") await chmod(journalPath, 0o600);
 
   deps.log(
     result.ok
-      ? `ok attempt ${reserved.attempts}/${config.maxRequestsPerDay} in ${record.latency_ms} ms`
+      ? `ok attempt ${reserved.attempts}/${config.maxRequestsPerDay} in ${record.latency_ms} ms` +
+          ` (request ${requestId}, settlement ${record.settlement_status ?? "unknown"})`
       : `failed attempt ${reserved.attempts}/${config.maxRequestsPerDay}: ${result.reason}`,
   );
   return result.ok ? EXIT_OK : EXIT_REQUEST_FAILED;
@@ -138,6 +147,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     fetch: globalThis.fetch,
     now: () => new Date(),
     monotonicMs: () => performance.now(),
+    randomUUID: () => randomUUID(),
     platform: process.platform,
     log: (line) => console.log(line),
   });

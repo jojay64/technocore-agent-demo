@@ -10,7 +10,9 @@ export const DEFAULT_MODEL = "qwen/qwen2.5-0.5b-instruct";
 // Hard ceilings: configuration can lower these, never raise them.
 export const HARD_MAX_REQUESTS_PER_DAY = 48;
 export const HARD_MAX_TOKENS = 128;
-export const HARD_TIMEOUT_MS = 60_000;
+// Devnet completions took 38 s (2026-11-08) and 89 s (2026-11-11).
+export const HARD_TIMEOUT_MS = 180_000;
+export const DEFAULT_TIMEOUT_MS = 120_000;
 
 // The probe sends one fixed prompt. Nothing remote is ever turned into a prompt.
 export const PROBE_PROMPT =
@@ -78,7 +80,7 @@ export function loadConfig(env: Record<string, string | undefined>): ProbeConfig
     model,
     maxRequestsPerDay: intInRange(env.FLOP_PROBE_MAX_REQUESTS_PER_DAY, 24, HARD_MAX_REQUESTS_PER_DAY, "FLOP_PROBE_MAX_REQUESTS_PER_DAY"),
     maxTokens: intInRange(env.FLOP_PROBE_MAX_TOKENS, 64, HARD_MAX_TOKENS, "FLOP_PROBE_MAX_TOKENS"),
-    timeoutMs: intInRange(env.FLOP_PROBE_TIMEOUT_MS, 30_000, HARD_TIMEOUT_MS, "FLOP_PROBE_TIMEOUT_MS"),
+    timeoutMs: intInRange(env.FLOP_PROBE_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, HARD_TIMEOUT_MS, "FLOP_PROBE_TIMEOUT_MS"),
     stateDir,
     apiKeyFile,
   };
@@ -142,12 +144,38 @@ export function buildRequestBody(config: ProbeConfig): string {
   });
 }
 
+// Settlement receipt returned with a paid completion (x_flop_receipt). Every
+// field is validated against a strict format and dropped otherwise, so remote
+// text never reaches the journal through it.
+export interface Receipt {
+  channelId: string | null;
+  settlementStatus: string | null;
+  miner: string | null;
+  costFlop: number | null;
+}
+
 export interface ParsedReply {
   ok: true;
   text: string;
   promptTokens: number | null;
   completionTokens: number | null;
   responseId: string | null;
+  receipt: Receipt;
+}
+
+function matching(value: unknown, pattern: RegExp): string | null {
+  return typeof value === "string" && pattern.test(value) ? value : null;
+}
+
+export function parseReceipt(body: any): Receipt {
+  const receipt = body?.x_flop_receipt;
+  const cost = body?.usage?.cost_flop;
+  return {
+    channelId: matching(receipt?.channelId, /^0x[0-9a-f]{64}$/i),
+    settlementStatus: matching(receipt?.settlementStatus, /^[a-z_]{1,32}$/),
+    miner: matching(receipt?.miner, /^[1-9A-HJ-NP-Za-km-z]{46,48}$/),
+    costFlop: typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : null,
+  };
 }
 
 export interface ParsedFailure {
@@ -175,6 +203,7 @@ export function parseCompletion(status: number, bodyText: string): ParsedReply |
     promptTokens: tokenCount(body?.usage?.prompt_tokens),
     completionTokens: tokenCount(body?.usage?.completion_tokens),
     responseId: typeof body?.id === "string" ? body.id.slice(0, 128) : null,
+    receipt: parseReceipt(body),
   };
 }
 
@@ -194,6 +223,9 @@ export interface JournalRecord {
   network: "devnet";
   model: string;
   attempt: number;
+  // Idempotency-Key sent with the request; the gateway files its receipt
+  // under this id at GET /v1/keys/me/receipts, failed requests included.
+  request_id: string;
   ok: boolean;
   reason: string | null;
   latency_ms: number;
@@ -201,20 +233,27 @@ export interface JournalRecord {
   completion_tokens: number | null;
   response_id: string | null;
   reply_excerpt: string | null;
+  cost_flop: number | null;
+  channel_id: string | null;
+  settlement_status: string | null;
+  miner: string | null;
 }
 
 export function journalRecord(
   config: ProbeConfig,
   attempt: number,
+  requestId: string,
   startedAt: Date,
   latencyMs: number,
   result: ParsedReply | ParsedFailure,
 ): JournalRecord {
+  const receipt = result.ok ? result.receipt : null;
   return {
     at: startedAt.toISOString(),
     network: config.network,
     model: config.model,
     attempt,
+    request_id: requestId,
     ok: result.ok,
     reason: result.ok ? null : result.reason,
     latency_ms: Math.max(0, Math.round(latencyMs)),
@@ -222,5 +261,9 @@ export function journalRecord(
     completion_tokens: result.ok ? result.completionTokens : null,
     response_id: result.ok ? result.responseId : null,
     reply_excerpt: result.ok ? excerpt(result.text) : null,
+    cost_flop: receipt?.costFlop ?? null,
+    channel_id: receipt?.channelId ?? null,
+    settlement_status: receipt?.settlementStatus ?? null,
+    miner: receipt?.miner ?? null,
   };
 }
