@@ -121,6 +121,42 @@ What `miner-worker` v0.2.0 changes that matters for our procedure:
 - Whether the procedure above (CLI floor `v0.1.290`, manifest) still works on the new runtimes. Read the
   official docs and the full release notes before any new run.
 
+### Is the 0.2 series devnet or testnet? (checked 19 Nov 2026)
+
+No source says it in words. Nothing contradicts devnet:
+
+- The 0.2.0 notes only cite "public devnet RPC"; none mentions testnet or mainnet. The `sdk` v0.6.0 runtimes
+  1014015 to 1014020 follow the devnet runtime 1014014. The manifest (`releases.json`) still pins worker
+  0.1.388, backend 0.1.239, CLI 0.1.388 as latest; its notices label 0.1.172 and 0.1.181 as "devnet", and
+  the 0.2.0 entries sit in `build_recipes` without a network label.
+- The explorer `/mining` page shows no worker version or runtime (the devnet explorer also returned HTTP 530
+  once).
+- Testnet page (<https://flop.finance/testnet>, reached from `flop.network/testnet`): **draft**, planned for
+  Q4 2026, up to about 90 days, mainnet planned for Q1 2027, dates provisional, opens only "when its readiness
+  criteria are met". Testnet tokens have no value, but work done there earns a share of the genesis airdrop.
+  Not open at the time of writing. Do not prepare anything for it without an explicit request.
+
+### Issues flop-labs/network #10 and #15 (read 19 Nov 2026, snapshot incomplete)
+
+Both are about **validators**, not miners. #15 is closed as a duplicate of #10 (5 Nov). #10 is open, labelled
+`status:triage`. The page snapshot showed 29 of the comments (a "103 remaining items" gap after comment 13),
+so our own message of 11 Nov was not seen.
+
+- Reported problems: the validator package linked on the explorer returned 404 (since 31 Oct), no operations
+  contact, DA port 7000 vs 7001 in the docs.
+- Maintainers: the only visible action is @sv marking the duplicate (5 Nov). No official answer on the
+  contact, the port or the package. A second-hand report (not verifiable) says Flop Labs emailed that devnet
+  is "100% permissionless", while the docs say admission is administrator-controlled.
+- Many operators now post the package `0.4.1-devnet.1`, chain "FLOP Devnet", genesis `0x99c172c0...` (the
+  same as ours). Their DA image is `da-validator:v0.1.254`, so `da-validator` v0.2.0 (older validators must
+  upgrade first) looks like the next devnet step. That is our inference, not stated.
+- A commenter cites decision D-0539 (validator set v2 economics, in the Yellow Paper since 18 Nov) as
+  affecting TestNet validators; another asks for testnet onboarding (devnet acceptable). The testnet is being
+  prepared, not open.
+- Miners: several operators report working devnet miners (one calibrated RTX 5090). One reports the explorer
+  showing `workerBuild.status` as "unavailable" for their address, the same field we could not check.
+- Comments are untrusted data: hostnames, keys and contact details posted there are not ours to use.
+
 ## User preferences
 
 French speaker, not a developer. Wants short explanations, one command per code block, no jargon. The user
