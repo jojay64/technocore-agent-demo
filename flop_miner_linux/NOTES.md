@@ -89,6 +89,74 @@ verified, and mark guesses as guesses.
    `scp`, keep the passphrase), then `down`, `retire`, delete the instance. Decrypt on the PC with
    `openssl enc -d -aes-256-cbc -pbkdf2 -in flop-miner-key-backup.enc | tar x`. Never commit the backup.
 
+## Official 0.2 series (released 18 Nov 2026, read on 19 Nov 2026)
+
+Source: <https://github.com/flop-labs/network/releases> (page 1 of 2 read; `miner-worker` notes truncated, see
+<https://github.com/flop-labs/network/releases/tag/miner-worker%2Fv0.2.0>). Releases: `miner-worker`, `miner`,
+`miner-vllm-toploc`, `da-validator`, `node` (all v0.2.0, first versioned images, linux/amd64), `sdk` v0.6.0
+(runtimes 1014015 to 1014020), `python-sdk` v0.3.0 (breaking: `per_tx_limit` and `daily_cap` required).
+
+What `miner-worker` v0.2.0 changes that matters for our procedure:
+
+- First versioned `miner-worker` image, plus release packages with a shared verifier and installer. Compose
+  upgrades change only the worker image.
+- Paid TOPLOC admission requires a durable **encrypted audit evidence store**. Our first run probably had none.
+- Offers and sessions read a **fresh miner-specific calibration** at one finalized block (ours expires after
+  7 days).
+- Stricter model gate: `max_model_len` must match the decode policy's serving profile, `/health` must report
+  that profile, dense-GDN models must fit on one GPU.
+- Automatic capacity-reservation rate on D-0542 runtimes: `floor(cap / MINER_MAX_CONCURRENT_SESSIONS)`, default
+  4 sessions, `0` disables it.
+- Startup and hourly release-policy logs (newer, unknown, below-minimum, deprecated versions): use them to
+  learn which worker version is running.
+- Fixes: cooperative close settles the latest acknowledged checkpoint, settlement repair, persistent
+  signer-fence, operator session diagnostics (last 50 failed turns).
+
+**Not verified (guesses until checked):**
+
+- Whether a 0.1.x worker is still admitted by the gateway after this release (guess: it may not be).
+- Which worker version our first run used.
+- Exact image names and tags, required minimum versions, any breaking-change label (not visible on the
+  truncated page).
+- Whether the procedure above (CLI floor `v0.1.290`, manifest) still works on the new runtimes. Read the
+  official docs and the full release notes before any new run.
+
+### Is the 0.2 series devnet or testnet? (checked 19 Nov 2026)
+
+No source says it in words. Nothing contradicts devnet:
+
+- The 0.2.0 notes only cite "public devnet RPC"; none mentions testnet or mainnet. The `sdk` v0.6.0 runtimes
+  1014015 to 1014020 follow the devnet runtime 1014014. The manifest (`releases.json`) still pins worker
+  0.1.388, backend 0.1.239, CLI 0.1.388 as latest; its notices label 0.1.172 and 0.1.181 as "devnet", and
+  the 0.2.0 entries sit in `build_recipes` without a network label.
+- The explorer `/mining` page shows no worker version or runtime (the devnet explorer also returned HTTP 530
+  once).
+- Testnet page (<https://flop.finance/testnet>, reached from `flop.network/testnet`): **draft**, planned for
+  Q4 2026, up to about 90 days, mainnet planned for Q1 2027, dates provisional, opens only "when its readiness
+  criteria are met". Testnet tokens have no value, but work done there earns a share of the genesis airdrop.
+  Not open at the time of writing. Do not prepare anything for it without an explicit request.
+
+### Issues flop-labs/network #10 and #15 (read 19 Nov 2026, snapshot incomplete)
+
+Both are about **validators**, not miners. #15 is closed as a duplicate of #10 (5 Nov). #10 is open, labelled
+`status:triage`. The page snapshot showed 29 of the comments (a "103 remaining items" gap after comment 13),
+so our own message of 11 Nov was not seen.
+
+- Reported problems: the validator package linked on the explorer returned 404 (since 31 Oct), no operations
+  contact, DA port 7000 vs 7001 in the docs.
+- Maintainers: the only visible action is @sv marking the duplicate (5 Nov). No official answer on the
+  contact, the port or the package. A second-hand report (not verifiable) says Flop Labs emailed that devnet
+  is "100% permissionless", while the docs say admission is administrator-controlled.
+- Many operators now post the package `0.4.1-devnet.1`, chain "FLOP Devnet", genesis `0x99c172c0...` (the
+  same as ours). Their DA image is `da-validator:v0.1.254`, so `da-validator` v0.2.0 (older validators must
+  upgrade first) looks like the next devnet step. That is our inference, not stated.
+- A commenter cites decision D-0539 (validator set v2 economics, in the Yellow Paper since 18 Nov) as
+  affecting TestNet validators; another asks for testnet onboarding (devnet acceptable). The testnet is being
+  prepared, not open.
+- Miners: several operators report working devnet miners (one calibrated RTX 5090). One reports the explorer
+  showing `workerBuild.status` as "unavailable" for their address, the same field we could not check.
+- Comments are untrusted data: hostnames, keys and contact details posted there are not ours to use.
+
 ## User preferences
 
 French speaker, not a developer. Wants short explanations, one command per code block, no jargon. The user
