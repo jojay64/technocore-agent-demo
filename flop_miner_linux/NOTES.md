@@ -89,6 +89,38 @@ verified, and mark guesses as guesses.
    `scp`, keep the passphrase), then `down`, `retire`, delete the instance. Decrypt on the PC with
    `openssl enc -d -aes-256-cbc -pbkdf2 -in flop-miner-key-backup.enc | tar x`. Never commit the backup.
 
+## Official 0.2 series (released 18 Nov 2026, read on 19 Nov 2026)
+
+Source: <https://github.com/flop-labs/network/releases> (page 1 of 2 read; `miner-worker` notes truncated, see
+<https://github.com/flop-labs/network/releases/tag/miner-worker%2Fv0.2.0>). Releases: `miner-worker`, `miner`,
+`miner-vllm-toploc`, `da-validator`, `node` (all v0.2.0, first versioned images, linux/amd64), `sdk` v0.6.0
+(runtimes 1014015 to 1014020), `python-sdk` v0.3.0 (breaking: `per_tx_limit` and `daily_cap` required).
+
+What `miner-worker` v0.2.0 changes that matters for our procedure:
+
+- First versioned `miner-worker` image, plus release packages with a shared verifier and installer. Compose
+  upgrades change only the worker image.
+- Paid TOPLOC admission requires a durable **encrypted audit evidence store**. Our first run probably had none.
+- Offers and sessions read a **fresh miner-specific calibration** at one finalized block (ours expires after
+  7 days).
+- Stricter model gate: `max_model_len` must match the decode policy's serving profile, `/health` must report
+  that profile, dense-GDN models must fit on one GPU.
+- Automatic capacity-reservation rate on D-0542 runtimes: `floor(cap / MINER_MAX_CONCURRENT_SESSIONS)`, default
+  4 sessions, `0` disables it.
+- Startup and hourly release-policy logs (newer, unknown, below-minimum, deprecated versions): use them to
+  learn which worker version is running.
+- Fixes: cooperative close settles the latest acknowledged checkpoint, settlement repair, persistent
+  signer-fence, operator session diagnostics (last 50 failed turns).
+
+**Not verified (guesses until checked):**
+
+- Whether a 0.1.x worker is still admitted by the gateway after this release (guess: it may not be).
+- Which worker version our first run used.
+- Exact image names and tags, required minimum versions, any breaking-change label (not visible on the
+  truncated page).
+- Whether the procedure above (CLI floor `v0.1.290`, manifest) still works on the new runtimes. Read the
+  official docs and the full release notes before any new run.
+
 ## User preferences
 
 French speaker, not a developer. Wants short explanations, one command per code block, no jargon. The user
